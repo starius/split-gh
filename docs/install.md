@@ -61,8 +61,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 Add the PATH setting to the shell's startup file. Set `SPLIT_GH_QUBE` to the
 authenticated qube name if it is not `gh-auth`. Confirm `command -v gh` points
-to the symlink. The shim derives the repository from `gh-resolved`, `upstream`,
-or `origin` in the current checkout. `GH_REPO` overrides checkout inference;
+to the symlink. The shim first honors a `remote.<name>.gh-resolved` setting, then tries
+`upstream` and `origin` in the current checkout. `GH_REPO` overrides checkout inference;
 use `-R owner/repo` to select an allowed repository explicitly.
 
 ## Verify

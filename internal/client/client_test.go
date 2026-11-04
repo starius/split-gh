@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"split-gh/internal/wire"
 	"strings"
@@ -12,7 +13,7 @@ import (
 func TestShimSendsRequest(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "request.json")
-	fakeGit := "#!/bin/sh\ncase \"$*\" in\n'remote get-url gh-resolved') echo https://github.com/owner/project.git;;\n'branch --show-current') echo feature/foo;;\nesac\n"
+	fakeGit := "#!/bin/sh\ncase \"$*\" in\n'remote get-url -- origin') echo https://github.com/owner/project.git;;\n'branch --show-current') echo feature/foo;;\nesac\n"
 	fakeRPC := "#!/bin/sh\n/bin/cat > \"$SPLIT_GH_TEST_REQUEST\"\nprintf '\\170\\000\\000\\000\\001\\000'\n"
 	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(fakeGit), 0700); err != nil {
 		t.Fatal(err)
@@ -91,5 +92,56 @@ func TestLocalWriteRefusal(t *testing.T) {
 		if got := locallyRefusedWrite(tc.args); got != tc.refuse {
 			t.Errorf("%v: %v", tc.args, got)
 		}
+	}
+}
+
+func TestInferRepoHonorsGHResolvedBase(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
+	t.Setenv("HOME", dir)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(dir, "missing-global-config"))
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(gitPath, args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s %v", args, out, err)
+		}
+	}
+	run("init", "-q")
+	run("remote", "add", "origin", "https://github.com/fork/project.git")
+	run("remote", "add", "upstream", "https://github.com/upstream/project.git")
+	run("remote", "add", "custom.remote", "https://github.com/custom/project.git")
+	if got, err := inferRepo(); err != nil || got != "upstream/project" {
+		t.Fatalf("fallback: %q %v", got, err)
+	}
+	run("config", "remote.custom.remote.gh-resolved", "base")
+	if got, err := inferRepo(); err != nil || got != "custom/project" {
+		t.Fatalf("configured base: %q %v", got, err)
+	}
+	run("config", "--add", "remote.custom.remote.gh-resolved", "other/target")
+	if got, err := inferRepo(); err != nil || got != "other/target" {
+		t.Fatalf("resolved repository: %q %v", got, err)
+	}
+	run("config", "--replace-all", "remote.custom.remote.gh-resolved", "invalid")
+	if _, err := inferRepo(); err == nil {
+		t.Fatal("invalid gh resolution fell back silently")
+	}
+	run("config", "--unset", "remote.custom.remote.gh-resolved")
+	run("remote", "remove", "upstream")
+	if got, err := inferRepo(); err != nil || got != "fork/project" {
+		t.Fatalf("origin fallback: %q %v", got, err)
 	}
 }

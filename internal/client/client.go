@@ -7,12 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"split-gh/internal/readpolicy"
 	"split-gh/internal/wire"
 	"strings"
 )
 
-var remoteRE = regexp.MustCompile(`^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/]+/[^/]+?)(?:\.git)?/?$`)
+var remoteRE = regexp.MustCompile(`(?i)^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/]+/[^/]+?)(?:\.git)?/?$`)
 
 func git(args ...string) string {
 	b, e := exec.Command("git", args...).Output()
@@ -56,14 +57,14 @@ func Main(args []string) int {
 		repo = canonical
 	}
 	if repo == "" {
-		for _, r := range []string{"gh-resolved", "upstream", "origin"} {
-			url := git("remote", "get-url", r)
-			if m := remoteRE.FindStringSubmatch(url); m != nil {
-				repo = m[1]
-				break
-			}
+		var err error
+		repo, err = inferRepo()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
 		}
 	}
+
 	for i, a := range args {
 		if strings.HasPrefix(a, "-R") && len(a) > 2 {
 			repo = strings.TrimPrefix(strings.TrimPrefix(a, "-R"), "=")
@@ -169,4 +170,70 @@ func locallyRefusedWrite(args []string) bool {
 		}
 	}
 	return false
+}
+
+// inferRepo respects gh's persisted base resolution before the usual remotes.
+// Every result is advisory: the server checks the repository again.
+func inferRepo() (string, error) {
+	type resolved struct{ name, value string }
+	var entries []resolved
+	indexes := map[string]int{}
+	config := git("config", "--get-regexp", `^remote\..*\.gh-resolved$`)
+	for _, line := range strings.Split(config, "\n") {
+		key, value, ok := strings.Cut(line, " ")
+		if !ok || !strings.HasPrefix(key, "remote.") || !strings.HasSuffix(key, ".gh-resolved") {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".gh-resolved")
+		if name != "" && value != "" {
+			value = strings.TrimSpace(value)
+			if index, exists := indexes[name]; exists {
+				entries[index].value = value
+			} else {
+				indexes[name] = len(entries)
+				entries = append(entries, resolved{name, value})
+			}
+		}
+	}
+	rank := func(name string) int {
+		switch strings.ToLower(name) {
+		case "upstream":
+			return 3
+		case "github":
+			return 2
+		case "origin":
+			return 1
+		}
+		return 0
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return rank(entries[i].name) > rank(entries[j].name) })
+	repoFor := func(name string) string {
+		url := git("remote", "get-url", "--", name)
+		if m := remoteRE.FindStringSubmatch(url); m != nil {
+			return m[1]
+		}
+		return ""
+	}
+	for _, entry := range entries {
+		remoteRepo := repoFor(entry.name)
+		if remoteRepo == "" {
+			continue
+		}
+		if entry.value == "base" {
+			return remoteRepo, nil
+		}
+		if canonical, ok := readpolicy.CanonicalRepo(entry.value); ok {
+			return canonical, nil
+		}
+		if m := remoteRE.FindStringSubmatch(entry.value); m != nil {
+			return m[1], nil
+		}
+		return "", fmt.Errorf("invalid gh-resolved repository for remote %q", entry.name)
+	}
+	for _, name := range []string{"upstream", "origin"} {
+		if repo := repoFor(name); repo != "" {
+			return repo, nil
+		}
+	}
+	return "", nil
 }

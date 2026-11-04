@@ -38,7 +38,7 @@ func TestReadPathEndToEnd(t *testing.T) {
 	if err := os.Symlink(binary, filepath.Join(clientDir, "gh")); err != nil {
 		t.Fatal(err)
 	}
-	write(filepath.Join(clientDir, "git"), "#!/bin/sh\ncase \"$*\" in 'remote get-url gh-resolved') echo https://github.com/o/r.git;; 'branch --show-current') echo main;; esac\n")
+	write(filepath.Join(clientDir, "git"), "#!/bin/sh\ncase \"$*\" in 'remote get-url -- origin') echo https://github.com/o/r.git;; 'branch --show-current') echo main;; esac\n")
 	write(filepath.Join(clientDir, "qrexec-client-vm"), "#!/bin/sh\nexport QREXEC_REMOTE_DOMAIN=ai\nexport PATH=\"$SPLIT_TEST_SERVER_PATH\"\nexec \"$SPLIT_TEST_BINARY\" serve read\n")
 	write(filepath.Join(serverDir, "gh"), "#!/bin/sh\ncase \"$*\" in 'api meta'*) printf '{\"value\":\"ok\"}\\n';; 'run list'*) printf '[{\"databaseId\":42}]\\n';; *reviewThreads*) printf '%s\\n' '{\"data\":{\"repository\":{\"pullRequest\":{\"reviewThreads\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"id\":\"T\",\"path\":\"file.go\",\"comments\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[]}}]}}}}}';; *) printf 'fake-gh %s\\n' \"$*\";; esac\n")
 	write(filepath.Join(home, ".config/split-gh/config.json"), `{"qubes":{"ai":{"read_repos":["o/r"]}},"read_token_file":"~/token"}`)
