@@ -56,17 +56,10 @@ func Main(args []string) int {
 	if canonical, ok := readpolicy.CanonicalRepo(repo); ok {
 		repo = canonical
 	}
-	for i, a := range args {
-		if strings.HasPrefix(a, "-R") && len(a) > 2 {
-			repo = strings.TrimPrefix(strings.TrimPrefix(a, "-R"), "=")
-		}
-		if strings.HasPrefix(a, "--repo=") {
-			repo = strings.TrimPrefix(a, "--repo=")
-		}
-		if (a == "--repo" || a == "-R") && i+1 < len(args) {
-			repo = args[i+1]
-		}
+	if explicit, ok := readpolicy.ClientRepoFlag(args); ok {
+		repo = explicit
 	}
+
 	if repo == "" {
 		var err error
 		repo, err = inferRepo()

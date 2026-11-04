@@ -26,3 +26,24 @@ func TestExtractClientJQ(t *testing.T) {
 		t.Fatal("accepted missing jq expression")
 	}
 }
+
+func TestClientRepoFlagSkipsOtherValues(t *testing.T) {
+	for _, tc := range []struct {
+		args  []string
+		repo  string
+		found bool
+	}{
+		{[]string{"pr", "view", "1", "-R", "o/r"}, "o/r", true},
+		{[]string{"-R=github.com/o/r", "pr", "view", "1"}, "github.com/o/r", true},
+		{[]string{"pr", "list", "--search", "--repo=not-an-option"}, "", false},
+		{[]string{"pr", "view", "--template", "--repo=not-an-option"}, "", false},
+		{[]string{"api", "repos/o/r", "-f", "--repo=not-an-option"}, "", false},
+		{[]string{"pr", "threads", "1", "-Ro/r"}, "o/r", true},
+		{[]string{"pr", "view", "--unknown", "--repo=o/r"}, "", false},
+	} {
+		repo, found := ClientRepoFlag(tc.args)
+		if repo != tc.repo || found != tc.found {
+			t.Errorf("%v => %q, %v", tc.args, repo, found)
+		}
+	}
+}

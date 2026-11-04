@@ -39,6 +39,19 @@ func TestShimSendsRequest(t *testing.T) {
 	if q.Repo != "owner/project" || q.Branch != "feature/foo" || strings.Join(q.Argv, " ") != "pr view 123 --comments" || q.V != 1 {
 		t.Fatalf("unexpected request: %+v", q)
 	}
+	if code := Main([]string{"pr", "list", "--search", "--repo=not-an-option"}); code != 0 {
+		t.Fatal(code)
+	}
+	data, err = os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(data, &q); err != nil {
+		t.Fatal(err)
+	}
+	if q.Repo != "owner/project" {
+		t.Fatalf("flag value treated as repository: %+v", q)
+	}
 	t.Setenv("GH_REPO", "github.com/env/project")
 	if code := Main([]string{"pr", "view", "1"}); code != 0 {
 		t.Fatal(code)

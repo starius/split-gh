@@ -94,3 +94,61 @@ func ExtractClientJQ(argv []string) ([]string, string, bool, error) {
 	}
 	return result, expression, found, nil
 }
+
+// ClientRepoFlag finds an explicit repository option without interpreting
+// positional arguments or other options' values as flags. The server still
+// validates the complete argv and the selected repository independently.
+func ClientRepoFlag(argv []string) (string, bool) {
+	args, err := NormalizeGlobal(argv)
+	if err != nil || len(args) < 2 || args[0] == "api" {
+		return "", false
+	}
+	key := args[0] + " " + args[1]
+	flags := map[string]bool{"repo": true}
+	if key != "pr threads" {
+		defs, ok := commands[key]
+		if !ok {
+			return "", false
+		}
+		for _, s := range strings.Split(defs, ",") {
+			flags[s] = true
+		}
+	}
+	var repo string
+	found := false
+	for i := 2; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			continue
+		}
+		if a == "--" {
+			return "", false
+		}
+		name, value, has := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-"), "=")
+		if !strings.HasPrefix(a, "--") {
+			if len(name) > 1 {
+				value = name[1:]
+				name = name[:1]
+				has = true
+			}
+			if v := shortFlag(key, name); v != "" {
+				name = v
+			}
+		}
+		if !flags[name] {
+			return "", false
+		}
+		if !has && !bools[name] {
+			i++
+			if i >= len(args) {
+				return "", false
+			}
+			value = args[i]
+		}
+		if name == "repo" {
+			repo = value
+			found = true
+		}
+	}
+	return repo, found
+}
