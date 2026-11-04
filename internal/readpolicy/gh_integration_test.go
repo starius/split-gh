@@ -202,6 +202,7 @@ func TestRealGHAcceptsAllowedFlags(t *testing.T) {
 	values := map[string]string{"state": "open", "author": "alice", "assignee": "alice", "base": "main", "head": "topic", "label": "bug", "limit": "10", "search": "bug", "json": "number", "template": "{{.}}", "color": "never", "interval": "10", "milestone": "v1", "mention": "alice", "branch": "main", "commit": "abcdef", "event": "push", "status": "success", "user": "alice", "workflow": "ci.yml", "job": "1", "attempt": "1", "ref": "main", "repo": "o/r", "owner": "o", "sort": "created", "order": "asc", "committer": "alice", "filename": "file", "extension": "go", "language": "go"}
 	for command, flags := range commands {
 		t.Run(command, func(t *testing.T) {
+			var allOptions []string
 			for _, flag := range strings.Split(flags, ",") {
 				if flag == "jq" {
 					continue
@@ -229,6 +230,7 @@ func TestRealGHAcceptsAllowedFlags(t *testing.T) {
 					option += "=" + value
 				}
 				args = append(args, option)
+				allOptions = append(allOptions, option)
 				canonical, err := Parse(args, "o/r", "main", []string{"o/*"})
 				if err != nil {
 					t.Fatalf("%v: %v", args, err)
@@ -242,6 +244,32 @@ func TestRealGHAcceptsAllowedFlags(t *testing.T) {
 				if !ok || exit.ExitCode() != 4 {
 					t.Errorf("%v: expected auth exit 4, got %v: %s", canonical, err, out)
 				}
+			}
+			// Check the complete canonical flag set in one invocation as well.
+			args := strings.Fields(command)
+			switch command {
+			case "pr view", "pr diff", "pr checks", "issue view", "run view":
+				args = append(args, "1")
+			case "workflow view":
+				args = append(args, "ci.yml")
+			case "release view":
+				args = append(args, "v1")
+			case "search issues", "search prs", "search commits", "search code":
+				args = append(args, "query")
+			}
+			args = append(args, allOptions...)
+			canonical, err := Parse(args, "o/r", "main", []string{"o/*"})
+			if err != nil {
+				t.Fatalf("all flags %v: %v", args, err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, gh, canonical...)
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GH_CONFIG_DIR=" + dir, "GH_PROMPT_DISABLED=1", "HTTPS_PROXY=http://127.0.0.1:1", "NO_PROXY="}
+			out, err := cmd.CombinedOutput()
+			exit, ok := err.(*exec.ExitError)
+			if !ok || exit.ExitCode() != 4 {
+				t.Errorf("all flags %v: expected auth exit 4, got %v: %s", canonical, err, out)
 			}
 		})
 	}
