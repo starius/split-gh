@@ -130,3 +130,18 @@ the `jq` executable; install `jq` there if that option is needed.
 Read requests are limited to 60 per minute per calling qube, across service
 processes. Requests over the limit are refused before reading their headers;
 repeated rate-limit refusals are not added to the audit log.
+
+For the broader real-GitHub command matrix, provide fixtures in the same private
+repository in addition to the four variables above. The pull request must have
+passing checks, and the issue, Actions run, workflow, and release must exist:
+
+```sh
+SPLIT_GH_E2E_ISSUE=42 \
+SPLIT_GH_E2E_RUN=123456789 \
+SPLIT_GH_E2E_WORKFLOW=ci.yml \
+SPLIT_GH_E2E_RELEASE=v1.0.0 \
+go test ./cmd/split-gh -run '^TestQubesAllReadCommands$' -count=1 -v
+```
+
+Export the four core `SPLIT_GH_E2E_*` variables first. This matrix exercises each
+allowlisted read command with the installed service and actual GitHub API.

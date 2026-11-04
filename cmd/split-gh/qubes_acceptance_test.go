@@ -131,3 +131,77 @@ func TestQubesPrivateRead(t *testing.T) {
 		})
 	}
 }
+
+// TestQubesAllReadCommands exercises every allowed read command against real
+// GitHub. The named fixtures must exist in the same private repository.
+func TestQubesAllReadCommands(t *testing.T) {
+	repoInput := os.Getenv("SPLIT_GH_E2E_REPO")
+	qube := os.Getenv("SPLIT_GH_E2E_QUBE")
+	checkout := os.Getenv("SPLIT_GH_E2E_CHECKOUT")
+	pr := os.Getenv("SPLIT_GH_E2E_PR")
+	issue := os.Getenv("SPLIT_GH_E2E_ISSUE")
+	run := os.Getenv("SPLIT_GH_E2E_RUN")
+	workflow := os.Getenv("SPLIT_GH_E2E_WORKFLOW")
+	release := os.Getenv("SPLIT_GH_E2E_RELEASE")
+	// These extra fixture values opt in independently of the core acceptance test.
+	if issue == "" && run == "" && workflow == "" && release == "" {
+		t.Skip("set the issue, run, workflow and release fixture variables to run the full real-GitHub command matrix")
+	}
+	repo, ok := readpolicy.CanonicalRepo(repoInput)
+	positive := func(s string) bool { n, err := strconv.Atoi(s); return err == nil && n > 0 && strconv.Itoa(n) == s }
+	if !ok || qube == "" || !filepath.IsAbs(checkout) || !positive(pr) || !positive(issue) || !positive(run) || workflow == "" || release == "" {
+		t.Fatal("provide the repository, qube, checkout, positive PR, issue and run IDs, workflow and release fixture variables")
+	}
+	if _, err := exec.LookPath("qrexec-client-vm"); err != nil {
+		t.Fatalf("qrexec-client-vm unavailable: %v", err)
+	}
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "split-gh")
+	shim := filepath.Join(dir, "gh")
+	if out, err := exec.Command("go", "build", "-trimpath", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %q: %v", out, err)
+	}
+	if err := os.Symlink(binary, shim); err != nil {
+		t.Fatal(err)
+	}
+	repoFlag := "--repo=" + repo
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"pr view", []string{"pr", "view", pr, repoFlag}},
+		{"pr list", []string{"pr", "list", repoFlag}},
+		{"pr diff", []string{"pr", "diff", pr, "--name-only", repoFlag}},
+		{"pr checks", []string{"pr", "checks", pr, repoFlag}},
+		{"pr threads", []string{"pr", "threads", pr, repoFlag}},
+		{"issue view", []string{"issue", "view", issue, repoFlag}},
+		{"issue list", []string{"issue", "list", repoFlag}},
+		{"repo view", []string{"repo", "view", repoFlag}},
+		{"label list", []string{"label", "list", repoFlag}},
+		{"release list", []string{"release", "list", repoFlag}},
+		{"release view", []string{"release", "view", release, repoFlag}},
+		{"run list", []string{"run", "list", repoFlag}},
+		{"run view", []string{"run", "view", run, repoFlag}},
+		{"workflow list", []string{"workflow", "list", repoFlag}},
+		{"workflow view", []string{"workflow", "view", workflow, repoFlag}},
+		{"search issues", []string{"search", "issues", "test", repoFlag}},
+		{"search prs", []string{"search", "prs", "test", repoFlag}},
+		{"search commits", []string{"search", "commits", "test", repoFlag}},
+		{"search code", []string{"search", "code", "test", repoFlag}},
+		{"api", []string{"api", "repos/" + repo + "/pulls/" + pr + "/comments"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, shim, tc.args...)
+			cmd.Dir = checkout
+			cmd.Env = append(os.Environ(), "SPLIT_GH_QUBE="+qube, "GH_REPO=")
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("read failed: %v; stderr=%q", err, stderr.String())
+			}
+		})
+	}
+}
