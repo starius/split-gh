@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"split-gh/internal/wire"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -138,6 +139,31 @@ func TestInferRepoHonorsGHResolvedBase(t *testing.T) {
 	run("config", "--replace-all", "remote.custom.remote.gh-resolved", "invalid")
 	if _, err := inferRepo(); err == nil {
 		t.Fatal("invalid gh resolution fell back silently")
+	}
+	rpcdir := filepath.Join(dir, "rpc")
+	if err := os.Mkdir(rpcdir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	capture := filepath.Join(dir, "request.json")
+	script := "#!/bin/sh\n/bin/cat > " + strconv.Quote(capture) + "\nprintf '\\170\\000\\000\\000\\001\\000'\n"
+	if err := os.WriteFile(filepath.Join(rpcdir, "qrexec-client-vm"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", rpcdir+string(os.PathListSeparator)+filepath.Dir(gitPath))
+	t.Setenv("GH_REPO", "")
+	if code := Main([]string{"pr", "view", "1", "-R", "override/repo"}); code != 0 {
+		t.Fatalf("explicit override failed: %d", code)
+	}
+	data, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request wire.Request
+	if err = json.Unmarshal(data, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Repo != "override/repo" {
+		t.Fatalf("wrong override: %+v", request)
 	}
 	run("config", "--unset", "remote.custom.remote.gh-resolved")
 	run("remote", "remove", "upstream")

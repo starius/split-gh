@@ -56,15 +56,6 @@ func Main(args []string) int {
 	if canonical, ok := readpolicy.CanonicalRepo(repo); ok {
 		repo = canonical
 	}
-	if repo == "" {
-		var err error
-		repo, err = inferRepo()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-	}
-
 	for i, a := range args {
 		if strings.HasPrefix(a, "-R") && len(a) > 2 {
 			repo = strings.TrimPrefix(strings.TrimPrefix(a, "-R"), "=")
@@ -74,6 +65,14 @@ func Main(args []string) int {
 		}
 		if (a == "--repo" || a == "-R") && i+1 < len(args) {
 			repo = args[i+1]
+		}
+	}
+	if repo == "" {
+		var err error
+		repo, err = inferRepo()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
 		}
 	}
 	if canonical, ok := readpolicy.CanonicalRepo(repo); ok {
