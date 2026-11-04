@@ -3,6 +3,7 @@ package readpolicy
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
@@ -282,6 +283,12 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 				return nil, errors.New("only Accept header is allowed")
 			}
 		case "field", "raw-field":
+			if api {
+				fieldKey, _, _ := strings.Cut(val, "=")
+				if forbiddenMethodParameter(fieldKey) {
+					return nil, errors.New("method override parameter is not allowed")
+				}
+			}
 			if name == "field" && strings.Contains(val, "=@") {
 				return nil, errors.New("file fields are not allowed")
 			}
@@ -293,29 +300,44 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 		if len(pos) != 1 {
 			return nil, errors.New("api requires one path")
 		}
-		p := pos[0]
-		if strings.Contains(p, "{owner}") || strings.Contains(p, "{repo}") {
+		endpoint, rawQuery, hasQuery := strings.Cut(pos[0], "?")
+		if strings.ContainsAny(endpoint, "#%\\") || strings.Contains(endpoint, "..") || strings.Contains(rawQuery, "#") {
+			return nil, errors.New("API path not allowed")
+		}
+		if hasQuery {
+			params, err := url.ParseQuery(rawQuery)
+			if err != nil {
+				return nil, errors.New("invalid API query string")
+			}
+			for name := range params {
+				if forbiddenMethodParameter(name) {
+					return nil, errors.New("method override parameter is not allowed")
+				}
+			}
+		}
+		if strings.Contains(endpoint, "{owner}") || strings.Contains(endpoint, "{repo}") {
 			if !Allowed(repo, allowed) {
 				return nil, errors.New("repository not allowed")
 			}
-			repoParts := strings.Split(repo, "/")
-			p = strings.ReplaceAll(p, "{owner}", repoParts[0])
-			p = strings.ReplaceAll(p, "{repo}", repoParts[1])
+			parts := strings.Split(repo, "/")
+			endpoint = strings.ReplaceAll(endpoint, "{owner}", parts[0])
+			endpoint = strings.ReplaceAll(endpoint, "{repo}", parts[1])
 		}
-		if strings.EqualFold(strings.TrimPrefix(p, "/"), "graphql") {
+		if strings.EqualFold(strings.TrimPrefix(endpoint, "/"), "graphql") {
 			return nil, errors.New("agent-written GraphQL is not allowed")
 		}
-
-		// These exact endpoints are not scoped to an account or repository.
-		switch p {
+		switch endpoint {
 		case "meta", "zen", "emojis", "rate_limit":
-			return append([]string{"api", p, "--method=GET"}, opts...), nil
+		default:
+			parts := strings.Split(endpoint, "/")
+			if len(parts) < 3 || parts[0] != "repos" || !Allowed(parts[1]+"/"+parts[2], allowed) {
+				return nil, errors.New("API path not allowed")
+			}
 		}
-		parts := strings.Split(p, "/")
-		if len(parts) < 3 || parts[0] != "repos" || !Allowed(parts[1]+"/"+parts[2], allowed) || strings.ContainsAny(p, "?#%\\") || strings.Contains(p, "..") {
-			return nil, errors.New("API path not allowed")
+		if hasQuery {
+			endpoint += "?" + rawQuery
 		}
-		return append([]string{"api", p, "--method=GET"}, opts...), nil
+		return append([]string{"api", endpoint, "--method=GET"}, opts...), nil
 	}
 	if !strings.HasPrefix(key, "search ") {
 		for _, term := range pos {
@@ -344,4 +366,19 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 		pos = append(pos, branch)
 	}
 	return append(append(strings.Split(key, " "), pos...), opts...), nil
+}
+
+func forbiddenMethodParameter(key string) bool {
+	if strings.IndexFunc(key, unicode.IsControl) >= 0 {
+		return true
+	}
+	key = strings.ToLower(strings.TrimSpace(key))
+	if i := strings.IndexByte(key, '['); i >= 0 {
+		key = key[:i]
+	}
+	switch key {
+	case "_method", "method", "x-http-method-override", "x-method-override", "x-http-method":
+		return true
+	}
+	return strings.Contains(key, "%") || strings.IndexFunc(key, unicode.IsControl) >= 0
 }

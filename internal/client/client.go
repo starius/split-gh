@@ -71,14 +71,8 @@ func Main(args []string) int {
 	if canonical, ok := readpolicy.CanonicalRepo(repo); ok {
 		repo = canonical
 	}
-	if repo == "" && len(args) > 1 && args[0] == "api" {
-		for _, a := range args[1:] {
-			p := strings.Split(a, "/")
-			if len(p) >= 3 && p[0] == "repos" {
-				repo = p[1] + "/" + p[2]
-				break
-			}
-		}
+	if repo == "" {
+		repo = repoFromAPIArgs(args)
 	}
 	target := os.Getenv("SPLIT_GH_QUBE")
 	if target == "" {
@@ -228,4 +222,20 @@ func inferRepo() (string, error) {
 		}
 	}
 	return "", nil
+}
+
+func repoFromAPIArgs(args []string) string {
+	if len(args) < 2 || args[0] != "api" {
+		return ""
+	}
+	for _, arg := range args[1:] {
+		endpoint, _, _ := strings.Cut(arg, "?")
+		parts := strings.Split(endpoint, "/")
+		if len(parts) >= 3 && parts[0] == "repos" {
+			if repo, ok := readpolicy.CanonicalRepo(parts[1] + "/" + parts[2]); ok {
+				return repo
+			}
+		}
+	}
+	return ""
 }

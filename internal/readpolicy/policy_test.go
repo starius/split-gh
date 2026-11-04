@@ -322,3 +322,42 @@ func TestOwnerSearchWithWildcardOwnerGrants(t *testing.T) {
 		}
 	}
 }
+
+func TestRESTQueryStrings(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint string
+		ok       bool
+	}{
+		{"repos/o/r/issues?state=closed&per_page=50", true},
+		{"repos/o/r/issues?labels=bug%20fix", true},
+		{"repos/o/r/issues?_method=POST", false},
+		{"repos/o/r/issues?%5fmethod=POST", false},
+		{"repos/o/r/issues?X-HTTP-Method-Override=POST", false},
+		{"repos/o/r/issues?state=%zz", false},
+		{"repos/other/r/issues?state=open", false},
+		{"repos/o/r/../../graphql?query=x", false},
+		{"graphql?query=x", false}, {"/graphql?query=x", false},
+		{"https://github.com/o/r?x=y", false},
+	} {
+		got, err := Parse([]string{"api", tc.endpoint}, "o/r", "main", []string{"o/*"})
+		if (err == nil) != tc.ok {
+			t.Errorf("%q: %v", tc.endpoint, err)
+		}
+		if tc.ok && (got[1] != tc.endpoint || got[2] != "--method=GET") {
+			t.Errorf("unexpected args %v", got)
+		}
+	}
+	for _, field := range []string{"_method=POST", "X-HTTP-Method-Override=POST", "method[override]=POST", "%5fmethod=POST"} {
+		if _, err := Parse([]string{"api", "repos/o/r", "-f", field}, "o/r", "main", []string{"o/*"}); err == nil {
+			t.Errorf("accepted %q", field)
+		}
+	}
+}
+
+func TestRESTQueryRejectsControlInParameterName(t *testing.T) {
+	for _, endpoint := range []string{"repos/o/r/issues?%00_method=POST", "repos/o/r/issues?x%0a=1"} {
+		if _, err := Parse([]string{"api", endpoint}, "o/r", "main", []string{"o/*"}); err == nil {
+			t.Errorf("accepted %q", endpoint)
+		}
+	}
+}

@@ -184,3 +184,19 @@ func TestInferRepoHonorsGHResolvedBase(t *testing.T) {
 		t.Fatalf("origin fallback: %q %v", got, err)
 	}
 }
+
+func TestRepoFromAPIPathWithQuery(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"api", "repos/o/r?state=open"}, "o/r"},
+		{[]string{"api", "-X", "GET", "repos/o/r/issues?state=closed"}, "o/r"},
+		{[]string{"api", "graphql?query=x"}, ""},
+		{[]string{"api", "repos/../r?x=y"}, ""},
+	} {
+		if got := repoFromAPIArgs(tc.args); got != tc.want {
+			t.Errorf("%v => %q", tc.args, got)
+		}
+	}
+}

@@ -91,7 +91,8 @@ and filters cannot contain additional repository scope qualifiers or boolean
 operators and grouping that could broaden that scope.
 
 REST API paths under `repos/OWNER/REPO` are checked against the caller’s
-repository grants even outside a checkout. The service also accepts the exact
+repository grants even outside a checkout. Ordinary query strings are accepted,
+while method-override parameters are refused. The service also accepts the exact
 `meta`, `zen`, `emojis`, and `rate_limit` API paths.
 
 The service independently refuses writes from a modified client. The local

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,7 @@ func TestRealGHUsesGET(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "https://")
 	cases := [][]string{
 		{"api", "repos/o/r/pulls/1/comments", "-f", "per_page=10"},
+		{"api", "repos/o/r/pulls/1/comments?per_page=20", "-f", "page=2"},
 	}
 	for _, args := range cases {
 		canonical, err := Parse(args, "o/r", "main", []string{"o/*"})
@@ -58,6 +60,12 @@ func TestRealGHUsesGET(t *testing.T) {
 		got := <-requests
 		if got.method != "GET" || len(got.body) != 0 {
 			t.Fatalf("unexpected request: %+v", got)
+		}
+		if strings.Contains(strings.Join(args, " "), "per_page=20") {
+			params, err := url.ParseQuery(got.query)
+			if err != nil || params.Get("per_page") != "20" || params.Get("page") != "2" {
+				t.Fatalf("query not preserved: %q %v", got.query, err)
+			}
 		}
 
 	}
