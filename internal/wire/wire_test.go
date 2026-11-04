@@ -51,3 +51,13 @@ func TestFrames(t *testing.T) {
 		t.Fatalf("short write: %v", err)
 	}
 }
+
+func TestHeaderLeavesPayloadUnread(t *testing.T) {
+	r := bytes.NewBufferString("{\"v\":1}\n\x00payload")
+	if _, err := ReadRequest(r); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.String(); got != "\x00payload" {
+		t.Fatalf("remaining payload %q", got)
+	}
+}

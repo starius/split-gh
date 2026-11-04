@@ -1,26 +1,36 @@
 package wire
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
 )
 
-const MaxHeader = 1 << 20
+const MaxHeader = 64 << 10
 const MaxOutput = 16 << 20
 
 func ReadRequest(r io.Reader) (Request, error) {
 	var q Request
-	b := bufio.NewReader(io.LimitReader(r, MaxHeader+1))
-	line, e := b.ReadBytes('\n')
-	if e != nil || len(line) > MaxHeader {
+	// Read only the header so any following binary payload remains available.
+	line := make([]byte, 0, 1024)
+	var one [1]byte
+	for len(line) < MaxHeader {
+		if _, err := io.ReadFull(r, one[:]); err != nil {
+			return q, errors.New("invalid or oversized header")
+		}
+		line = append(line, one[0])
+		if one[0] == '\n' {
+			break
+		}
+	}
+	if len(line) == 0 || line[len(line)-1] != '\n' {
 		return q, errors.New("invalid or oversized header")
 	}
-	d := json.NewDecoder(bytesReader(line))
+	d := json.NewDecoder(bytes.NewReader(line))
 	d.DisallowUnknownFields()
-	if e = d.Decode(&q); e != nil {
+	if e := d.Decode(&q); e != nil {
 		return q, e
 	}
 	var extra any
@@ -31,18 +41,6 @@ func ReadRequest(r io.Reader) (Request, error) {
 		return q, errors.New("unsupported version")
 	}
 	return q, nil
-}
-func bytesReader(b []byte) io.Reader { return &reader{b: b} }
-
-type reader struct{ b []byte }
-
-func (r *reader) Read(p []byte) (int, error) {
-	if len(r.b) == 0 {
-		return 0, io.EOF
-	}
-	n := copy(p, r.b)
-	r.b = r.b[n:]
-	return n, nil
 }
 func Frame(w io.Writer, k byte, b []byte) error {
 	var h [5]byte
