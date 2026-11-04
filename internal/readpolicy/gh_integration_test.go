@@ -2,6 +2,7 @@ package readpolicy
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"io"
 	"net/http"
@@ -312,9 +313,18 @@ func TestRealGHPRShorthandStaysInAllowedRepo(t *testing.T) {
 	_, _ = cmd.CombinedOutput()
 	mu.Lock()
 	defer mu.Unlock()
-	joined := strings.Join(bodies, "\n")
-	if !strings.Contains(joined, `"owner":"o"`) || !strings.Contains(joined, `"repo":"r"`) || !strings.Contains(joined, `"headRefName":"other/repo#7"`) {
-		t.Fatalf("unexpected gh requests: %s", joined)
+	if len(bodies) != 1 {
+		t.Fatalf("expected one scoped GitHub request, got %d: %q", len(bodies), bodies)
+	}
+	var request struct {
+		Query     string         `json:"query"`
+		Variables map[string]any `json:"variables"`
+	}
+	if err := json.Unmarshal([]byte(bodies[0]), &request); err != nil {
+		t.Fatalf("invalid GraphQL request: %v", err)
+	}
+	if request.Variables["owner"] != "o" || request.Variables["repo"] != "r" || request.Variables["headRefName"] != "other/repo#7" || !strings.Contains(request.Query, "repository(") {
+		t.Fatalf("unexpected GitHub query: %s", bodies[0])
 	}
 }
 
