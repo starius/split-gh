@@ -125,3 +125,7 @@ The service refuses `--jq` because gh’s jq implementation can read environment
 variables, including the token. The shim handles `--jq` locally in ai using
 the `jq` executable; install `jq` there if that option is needed.
 
+
+Read requests are limited to 60 per minute per calling qube, across service
+processes. Requests over the limit are refused before reading their headers;
+repeated rate-limit refusals are not added to the audit log.

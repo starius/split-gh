@@ -33,17 +33,30 @@ func Read(in io.Reader, out io.Writer) {
 	caller := os.Getenv("QREXEC_REMOTE_DOMAIN")
 	home, _ := os.UserHomeDir()
 	started := false
+	logResult := true
 	var requestID string
 	defer func() {
 		phase := "rejected"
 		if started {
 			phase = "finish"
 		}
-		_ = appendAudit(home, map[string]any{"time": time.Now().UTC(), "phase": phase, "request_id": requestID, "caller": caller, "repo": q.Repo, "argv": q.Argv, "status": code})
+		if logResult {
+			_ = appendAudit(home, map[string]any{"time": time.Now().UTC(), "phase": phase, "request_id": requestID, "caller": caller, "repo": q.Repo, "argv": q.Argv, "status": code})
+		}
 		wire.Frame(out, 'x', []byte{code})
 	}()
 	fail := func(e error) { wire.Frame(out, 'e', []byte(e.Error()+"\n")) }
-	q, e := readHeader(in, 10*time.Second)
+	admitted, e := admitRead(home, caller, time.Now())
+	if e != nil || !admitted {
+		logResult = false // Repeated rejected calls must not fill the audit disk.
+		if e != nil {
+			fail(fmt.Errorf("audit log unavailable"))
+			return
+		}
+		fail(fmt.Errorf("read rate limit exceeded"))
+		return
+	}
+	q, e = readHeader(in, 10*time.Second)
 	if e != nil {
 		fail(e)
 		return
