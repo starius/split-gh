@@ -76,6 +76,24 @@ gh run view --log-failed
 gh pr threads 123
 ```
 
+To run the full private-repository acceptance test from the split-gh source
+checkout in ai, after installing the service and dom0 policy, set the actual
+qube, repository, pull request number and checkout path:
+
+```sh
+SPLIT_GH_E2E_QUBE=gh-auth \
+SPLIT_GH_E2E_REPO=example/private \
+SPLIT_GH_E2E_PR=123 \
+SPLIT_GH_E2E_CHECKOUT="$HOME/path/to/checkout" \
+go test ./cmd/split-gh -run '^TestQubesPrivateRead$' -count=1 -v
+```
+
+The test confirms the repository is private, exercises the four reads, and
+sends hand-crafted write and GraphQL requests to the service to check their
+refusals. It does not need a token in ai and does not print successful read output.
+The checkout's branch needs a workflow run for the log check. The test is
+skipped unless all four variables are set; partial configuration fails.
+
 Use an actual pull request number and repository. `gh pr threads` emits one
 JSON object per thread, including paginated comments. Because the service
 cannot prompt, `gh run view` without a run or job ID selects the newest run on
