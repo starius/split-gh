@@ -246,3 +246,46 @@ func TestRealGHAcceptsAllowedFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestRealGHPRShorthandStaysInAllowedRepo(t *testing.T) {
+	gh, err := exec.LookPath("gh")
+	if err != nil {
+		t.Skip("gh is not installed")
+	}
+	var mu sync.Mutex
+	var bodies []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/meta") {
+			io.WriteString(w, `{"installed_version":"3.14.0"}`)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		bodies = append(bodies, string(b))
+		mu.Unlock()
+		io.WriteString(w, `{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}`)
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	cert := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	args, err := Parse([]string{"pr", "view", "other/repo#7", "--repo=o/r"}, "o/r", "main", []string{"o/r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, gh, args...)
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GH_CONFIG_DIR=" + dir, "GH_HOST=" + strings.TrimPrefix(server.URL, "https://"), "GH_ENTERPRISE_TOKEN=test-token", "GH_PROMPT_DISABLED=1", "SSL_CERT_FILE=" + cert, "NO_PROXY=*"}
+	_, _ = cmd.CombinedOutput()
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(bodies, "\n")
+	if !strings.Contains(joined, `"owner":"o"`) || !strings.Contains(joined, `"repo":"r"`) || !strings.Contains(joined, `"headRefName":"other/repo#7"`) {
+		t.Fatalf("unexpected gh requests: %s", joined)
+	}
+}
