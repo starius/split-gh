@@ -289,3 +289,26 @@ func TestRealGHPRShorthandStaysInAllowedRepo(t *testing.T) {
 		t.Fatalf("unexpected gh requests: %s", joined)
 	}
 }
+
+func TestRealGHAcceptsAPIFlagsOffline(t *testing.T) {
+	gh, err := exec.LookPath("gh")
+	if err != nil {
+		t.Skip("gh is not installed")
+	}
+	dir := t.TempDir()
+	for _, option := range []string{"--method=GET", "--header=Accept: application/json", "--field=page=1", "--raw-field=per_page=10", "--paginate", "--slurp", "--template={{.}}"} {
+		args, err := Parse([]string{"api", "repos/o/r/pulls", option}, "o/r", "main", []string{"o/r"})
+		if err != nil {
+			t.Fatalf("%s: %v", option, err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		cmd := exec.CommandContext(ctx, gh, args...)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GH_CONFIG_DIR=" + dir, "GH_PROMPT_DISABLED=1", "HTTPS_PROXY=http://127.0.0.1:1", "NO_PROXY="}
+		out, err := cmd.CombinedOutput()
+		cancel()
+		exit, ok := err.(*exec.ExitError)
+		if !ok || exit.ExitCode() != 4 {
+			t.Errorf("%v: expected auth exit 4, got %v: %s", args, err, out)
+		}
+	}
+}
