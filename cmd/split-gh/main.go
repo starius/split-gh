@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"split-gh/internal/client"
 	"split-gh/internal/serve"
+	"time"
 )
 
 func main() {
@@ -13,7 +14,7 @@ func main() {
 		os.Exit(client.Main(os.Args[1:]))
 	}
 	if len(os.Args) == 3 && os.Args[1] == "serve" && os.Args[2] == "read" {
-		serve.Read(os.Stdin, os.Stdout)
+		serve.ReadService(os.Stdin, os.Stdout, 90*time.Second)
 		return
 	}
 	fmt.Fprintln(os.Stderr, "usage: split-gh serve read (or invoke as gh)")
