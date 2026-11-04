@@ -151,3 +151,39 @@ func TestThreadQueryRejectsAgentQueryAndInvalidNumbers(t *testing.T) {
 		}
 	}
 }
+
+func TestOutdatedThreadIncludesOriginalLocationAndCommentDetails(t *testing.T) {
+	for _, field := range []string{"originalLine", "startLine", "originalStartLine", "diffSide", "subjectType", "url", "diffHunk"} {
+		if !strings.Contains(threadsQuery, field) {
+			t.Fatalf("fixed query missing %s", field)
+		}
+	}
+	fetch := func(query string, fields ...string) ([]byte, error) {
+		if query != threadsQuery {
+			return nil, fmt.Errorf("unexpected query")
+		}
+		return []byte(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"T","isOutdated":true,"path":"file.go","line":null,"originalLine":42,"startLine":null,"originalStartLine":40,"diffSide":"RIGHT","subjectType":"LINE","comments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"body":"note","url":"https://github.com/o/r/pull/1#discussion_r1","diffHunk":"@@ -1 +1 @@"}]}}]}}}}}`), nil
+	}
+	var out bytes.Buffer
+	if err := writeThreads(fetch, &out, "o", "r", 1); err != nil {
+		t.Fatal(err)
+	}
+	var thread struct {
+		OriginalLine      *int   `json:"originalLine"`
+		OriginalStartLine *int   `json:"originalStartLine"`
+		DiffSide          string `json:"diffSide"`
+		SubjectType       string `json:"subjectType"`
+		Comments          struct {
+			Nodes []struct {
+				URL      string `json:"url"`
+				DiffHunk string `json:"diffHunk"`
+			} `json:"nodes"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &thread); err != nil {
+		t.Fatal(err)
+	}
+	if thread.OriginalLine == nil || *thread.OriginalLine != 42 || thread.OriginalStartLine == nil || *thread.OriginalStartLine != 40 || thread.DiffSide != "RIGHT" || thread.SubjectType != "LINE" || len(thread.Comments.Nodes) != 1 || thread.Comments.Nodes[0].URL == "" || thread.Comments.Nodes[0].DiffHunk == "" {
+		t.Fatalf("lost outdated thread details: %+v", thread)
+	}
+}

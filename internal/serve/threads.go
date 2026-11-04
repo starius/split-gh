@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const threadsQuery = `query($owner:String!, $name:String!, $number:Int!, $cursor:String, $id:ID!, $commentsCursor:String, $fetchThreads:Boolean!, $fetchComments:Boolean!) { repository(owner:$owner,name:$name) @include(if:$fetchThreads) { pullRequest(number:$number) { reviewThreads(first:100, after:$cursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first:100) { pageInfo { hasNextPage endCursor } nodes { author { login } body createdAt } } } } } } node(id:$id) @include(if:$fetchComments) { ... on PullRequestReviewThread { comments(first:100, after:$commentsCursor) { pageInfo { hasNextPage endCursor } nodes { author { login } body createdAt } } } } }`
+const threadsQuery = `query($owner:String!, $name:String!, $number:Int!, $cursor:String, $id:ID!, $commentsCursor:String, $fetchThreads:Boolean!, $fetchComments:Boolean!) { repository(owner:$owner,name:$name) @include(if:$fetchThreads) { pullRequest(number:$number) { reviewThreads(first:100, after:$cursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line originalLine startLine originalStartLine diffSide subjectType comments(first:100) { pageInfo { hasNextPage endCursor } nodes { author { login } body createdAt url diffHunk } } } } } } node(id:$id) @include(if:$fetchComments) { ... on PullRequestReviewThread { comments(first:100, after:$commentsCursor) { pageInfo { hasNextPage endCursor } nodes { author { login } body createdAt url diffHunk } } } } }`
 
 type pageInfo struct {
 	HasNextPage bool   `json:"hasNextPage"`
@@ -41,12 +41,17 @@ type commentPage struct {
 	Nodes    []json.RawMessage `json:"nodes"`
 }
 type reviewThread struct {
-	ID         string      `json:"id"`
-	IsResolved bool        `json:"isResolved"`
-	IsOutdated bool        `json:"isOutdated"`
-	Path       string      `json:"path"`
-	Line       *int        `json:"line"`
-	Comments   commentPage `json:"comments"`
+	ID                string      `json:"id"`
+	IsResolved        bool        `json:"isResolved"`
+	IsOutdated        bool        `json:"isOutdated"`
+	Path              string      `json:"path"`
+	Line              *int        `json:"line"`
+	OriginalLine      *int        `json:"originalLine"`
+	StartLine         *int        `json:"startLine"`
+	OriginalStartLine *int        `json:"originalStartLine"`
+	DiffSide          string      `json:"diffSide"`
+	SubjectType       string      `json:"subjectType"`
+	Comments          commentPage `json:"comments"`
 }
 type threadPage struct {
 	PageInfo pageInfo       `json:"pageInfo"`
