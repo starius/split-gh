@@ -176,7 +176,7 @@ func TestQubesAllReadCommands(t *testing.T) {
 		{"pr threads", []string{"pr", "threads", pr, repoFlag}},
 		{"issue view", []string{"issue", "view", issue, repoFlag}},
 		{"issue list", []string{"issue", "list", repoFlag}},
-		{"repo view", []string{"repo", "view", repoFlag}},
+		{"repo view", []string{"repo", "view", repoFlag, "--json=isPrivate"}},
 		{"label list", []string{"label", "list", repoFlag}},
 		{"release list", []string{"release", "list", repoFlag}},
 		{"release view", []string{"release", "view", release, repoFlag}},
@@ -197,10 +197,19 @@ func TestQubesAllReadCommands(t *testing.T) {
 			cmd := exec.CommandContext(ctx, shim, tc.args...)
 			cmd.Dir = checkout
 			cmd.Env = append(os.Environ(), "SPLIT_GH_QUBE="+qube, "GH_REPO=")
-			var stderr bytes.Buffer
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr
 			if err := cmd.Run(); err != nil {
 				t.Fatalf("read failed: %v; stderr=%q", err, stderr.String())
+			}
+			if tc.name == "repo view" {
+				var metadata struct {
+					IsPrivate bool `json:"isPrivate"`
+				}
+				if err := json.Unmarshal(stdout.Bytes(), &metadata); err != nil || !metadata.IsPrivate {
+					t.Fatalf("repository is not confirmed private: %v", err)
+				}
 			}
 		})
 	}
