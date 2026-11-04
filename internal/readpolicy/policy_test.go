@@ -361,3 +361,52 @@ func TestRESTQueryRejectsControlInParameterName(t *testing.T) {
 		}
 	}
 }
+
+// Exercise every phase 1 command family and its canonical scope. These are
+// representative reads, rather than a restatement of the internal flag table.
+func TestPhaseOneReadCommands(t *testing.T) {
+	for _, tc := range []struct {
+		args     []string
+		contains []string
+	}{
+		{[]string{"pr", "view"}, []string{"pr", "view", "feature/work", "--repo=o/r"}},
+		{[]string{"pr", "view", "123", "--comments"}, []string{"--comments", "--repo=o/r"}},
+		{[]string{"pr", "list", "--state", "closed"}, []string{"--state=closed", "--repo=o/r"}},
+		{[]string{"pr", "diff", "123", "--name-only"}, []string{"--name-only", "--repo=o/r"}},
+		{[]string{"pr", "checks", "123"}, []string{"--repo=o/r"}},
+		{[]string{"issue", "view", "123", "--comments"}, []string{"--comments", "--repo=o/r"}},
+		{[]string{"issue", "list", "--state", "open"}, []string{"--state=open", "--repo=o/r"}},
+		{[]string{"repo", "view"}, []string{"--repo=o/r"}},
+		{[]string{"label", "list"}, []string{"--repo=o/r"}},
+		{[]string{"release", "list"}, []string{"--repo=o/r"}},
+		{[]string{"release", "view", "v1"}, []string{"--repo=o/r"}},
+		{[]string{"run", "list", "--branch", "main"}, []string{"--branch=main", "--repo=o/r"}},
+		{[]string{"run", "view", "42", "--log"}, []string{"--log", "--repo=o/r"}},
+		{[]string{"run", "view", "42", "--log-failed"}, []string{"--log-failed", "--repo=o/r"}},
+		{[]string{"workflow", "list"}, []string{"--repo=o/r"}},
+		{[]string{"workflow", "view", "ci.yml"}, []string{"--repo=o/r"}},
+		{[]string{"search", "issues", "bug", "--repo=o/r"}, []string{"--repo=o/r"}},
+		{[]string{"search", "prs", "fix", "--repo=o/r"}, []string{"--repo=o/r"}},
+		{[]string{"search", "commits", "fix", "--repo=o/r"}, []string{"--repo=o/r"}},
+		{[]string{"search", "code", "symbol", "--repo=o/r"}, []string{"--repo=o/r"}},
+		{[]string{"api", "repos/o/r/pulls/123/comments"}, []string{"--method=GET"}},
+	} {
+		got, err := Parse(tc.args, "o/r", "feature/work", []string{"o/*"})
+		if err != nil {
+			t.Errorf("%v: %v", tc.args, err)
+			continue
+		}
+		for _, want := range tc.contains {
+			found := false
+			for _, arg := range got {
+				if arg == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("%v: missing %q in %v", tc.args, want, got)
+			}
+		}
+	}
+}
