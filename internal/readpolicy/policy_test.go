@@ -305,3 +305,20 @@ func TestAgentGraphQLAlwaysRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestOwnerSearchWithWildcardOwnerGrants(t *testing.T) {
+	for _, tc := range []struct {
+		owner  string
+		grants []string
+		ok     bool
+	}{
+		{"foo", []string{"*/*"}, true}, {"team-a", []string{"team-?/*"}, true}, {"TEAM-X", []string{"team-*/*"}, true},
+		{"other", []string{"team-*/*"}, false}, {"foo", []string{"foo/repo"}, false}, {"foo", []string{"foo/[a-z]*"}, false},
+		{"foo,other", []string{"*/*"}, false}, {"..", []string{"*/*"}, false}, {"foo", []string{"[/*"}, false},
+	} {
+		_, err := Parse([]string{"search", "issues", "bug", "--owner=" + tc.owner}, "", "", tc.grants)
+		if (err == nil) != tc.ok {
+			t.Errorf("owner=%q grants=%v: %v", tc.owner, tc.grants, err)
+		}
+	}
+}

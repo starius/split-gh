@@ -42,6 +42,24 @@ func Allowed(repo string, patterns []string) bool {
 	return false
 }
 
+// allowedOwner requires a grant that covers every repository for the owner;
+// a finite list of repositories is insufficient for an owner-wide search.
+func allowedOwner(owner string, patterns []string) bool {
+	if !Allowed(owner+"/x", patterns) {
+		return false
+	}
+	for _, pattern := range patterns {
+		ownerPattern, repoPattern, ok := strings.Cut(pattern, "/")
+		if !ok || repoPattern != "*" {
+			continue
+		}
+		if matches, err := path.Match(strings.ToLower(ownerPattern), strings.ToLower(owner)); err == nil && matches {
+			return true
+		}
+	}
+	return false
+}
+
 var commands = map[string]string{
 	"pr view": "comments,json,jq,template", "pr list": "state,author,assignee,base,head,label,limit,search,draft,json,jq,template", "pr diff": "name-only,patch,color", "pr checks": "json,jq,template,required,watch,interval,fail-fast", "issue view": "comments,json,jq,template", "issue list": "state,author,assignee,label,limit,search,milestone,mention,json,jq,template", "repo view": "json,jq,template", "label list": "limit,search,json,jq,template", "release list": "limit,exclude-drafts,exclude-pre-releases,json,jq,template", "release view": "json,jq,template", "run list": "branch,commit,event,limit,status,user,workflow,json,jq,template", "run view": "log,log-failed,job,attempt,exit-status,json,jq,template,verbose", "workflow list": "all,limit,json,jq,template", "workflow view": "ref,yaml,json,jq,template", "search issues": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search prs": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search commits": "repo,owner,limit,sort,order,author,committer,json,jq,template", "search code": "repo,owner,limit,filename,extension,language,json,jq,template",
 }
@@ -250,14 +268,7 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 				return nil, errors.New("repository mismatch")
 			}
 		case "owner":
-			permitted := false
-			for _, pattern := range allowed {
-				if strings.EqualFold(pattern, val+"/*") && Allowed(val+"/x", []string{pattern}) {
-					permitted = true
-					break
-				}
-			}
-			if !permitted {
+			if !allowedOwner(val, allowed) {
 				return nil, errors.New("owner is not fully allowed")
 			}
 			scoped = true
