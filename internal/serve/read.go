@@ -125,6 +125,9 @@ func Read(in io.Reader, out io.Writer) {
 			if err != nil {
 				return nil, err
 			}
+			if err := auditExecution(home, requestID, caller, q.Repo, args); err != nil {
+				return nil, err
+			}
 			cmd := exec.CommandContext(ctx, "gh", args...)
 			cmd.Dir = tmp
 			cmd.Env = env
@@ -149,6 +152,10 @@ func Read(in io.Reader, out io.Writer) {
 	// service is noninteractive, select the newest run for the checkout branch.
 	if needsLatestRun(args) {
 		listArgs := latestRunArgs(q.Repo, q.Branch)
+		if err := auditExecution(home, requestID, caller, q.Repo, listArgs); err != nil {
+			fail(err)
+			return
+		}
 		cmd := exec.CommandContext(ctx, "gh", listArgs...)
 		cmd.Dir = tmp
 		cmd.Env = env
@@ -165,6 +172,10 @@ func Read(in io.Reader, out io.Writer) {
 			return
 		}
 		args = append(args[:2], append([]string{strconv.FormatUint(id, 10)}, args[2:]...)...)
+	}
+	if err := auditExecution(home, requestID, caller, q.Repo, args); err != nil {
+		fail(err)
+		return
 	}
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = tmp
@@ -297,7 +308,43 @@ func parseThreadArgs(args []string, repo string, allowed []string) (int, error) 
 	return number, nil
 }
 
+func auditExecution(home, id, caller, repo string, args []string) error {
+	if err := appendAudit(home, map[string]any{"time": time.Now().UTC(), "phase": "execute", "request_id": id, "caller": caller, "repo": repo, "argv": args}); err != nil {
+		return fmt.Errorf("audit log unavailable")
+	}
+	return nil
+}
+
+func auditString(s string) string {
+	const limit = 256
+	if len(s) > limit {
+		return s[:limit] + "...[truncated]"
+	}
+	return s
+}
+
 func appendAudit(home string, event map[string]any) error {
+	// Bound each record even when all input fields are controlled by the caller.
+	for key, value := range event {
+		switch v := value.(type) {
+		case string:
+			event[key] = auditString(v)
+		case []string:
+			n := len(v)
+			if n > 32 {
+				n = 32
+			}
+			args := make([]string, 0, n+1)
+			for _, arg := range v[:n] {
+				args = append(args, auditString(arg))
+			}
+			if len(v) > n {
+				args = append(args, "...[truncated]")
+			}
+			event[key] = args
+		}
+	}
+
 	if home == "" {
 		return fmt.Errorf("home directory unavailable")
 	}

@@ -45,7 +45,7 @@ func TestReadIntegration(t *testing.T) {
 		}
 	}
 	data, err := os.ReadFile(filepath.Join(home, ".local/state/split-gh/log.jsonl"))
-	if err != nil || len(strings.Split(strings.TrimSpace(string(data)), "\n")) != 12 {
+	if err != nil || strings.Count(string(data), `"phase":"execute"`) != 5 || !strings.Contains(string(data), `"--repo=o/r"`) {
 		t.Fatalf("missing audit records: %q %v", data, err)
 	}
 }
