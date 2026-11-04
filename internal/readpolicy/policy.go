@@ -304,7 +304,7 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 			return nil, errors.New("api requires one path")
 		}
 		endpoint, rawQuery, hasQuery := strings.Cut(pos[0], "?")
-		if strings.ContainsAny(endpoint, "#%\\") || strings.Contains(endpoint, "..") || strings.Contains(rawQuery, "#") {
+		if strings.ContainsAny(endpoint, "#%\\:") || strings.Contains(rawQuery, "#") {
 			return nil, errors.New("API path not allowed")
 		}
 		if hasQuery {
@@ -333,7 +333,7 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 		case "meta", "zen", "emojis", "rate_limit":
 		default:
 			parts := strings.Split(endpoint, "/")
-			if len(parts) < 3 || parts[0] != "repos" || !Allowed(parts[1]+"/"+parts[2], allowed) {
+			if len(parts) < 3 || parts[0] != "repos" || !Allowed(parts[1]+"/"+parts[2], allowed) || !allowedReadRoute(parts[3:]) {
 				return nil, errors.New("API path not allowed")
 			}
 		}
@@ -390,4 +390,23 @@ func forbiddenMethodParameter(key string) bool {
 		return true
 	}
 	return strings.Contains(key, "%") || strings.IndexFunc(key, unicode.IsControl) >= 0
+}
+
+// allowedReadRoute limits repository API access to documented read families.
+func allowedReadRoute(parts []string) bool {
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	if len(parts) == 0 {
+		return true
+	}
+	switch parts[0] {
+	case "pulls", "issues", "commits", "contents", "git", "branches", "tags", "releases", "labels", "milestones", "compare", "check-runs", "check-suites", "statuses":
+		return true
+	case "actions":
+		return len(parts) >= 2 && (parts[1] == "runs" || parts[1] == "jobs" || parts[1] == "workflows")
+	}
+	return false
 }

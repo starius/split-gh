@@ -431,3 +431,16 @@ func TestRepoViewUsesOnlyCheckedRepository(t *testing.T) {
 		}
 	}
 }
+
+func TestRepositoryAPIReadRoutes(t *testing.T) {
+	for _, path := range []string{"repos/o/r/pulls/1/comments", "repos/o/r/compare/main...feature", "repos/o/r/actions/runs/1/jobs", "repos/o/r/git/refs/heads/main"} {
+		if _, err := Parse([]string{"api", path}, "o/r", "main", []string{"o/r"}); err != nil {
+			t.Errorf("%s: %v", path, err)
+		}
+	}
+	for _, path := range []string{"repos/o/r/hooks", "repos/o/r/keys", "repos/o/r/invitations", "repos/o/r/actions/secrets", "repos/o/r/actions/variables", "repos/o/r/compare/main...other:branch", "repos/o/r/pulls/../hooks"} {
+		if _, err := Parse([]string{"api", path}, "o/r", "main", []string{"o/r"}); err == nil {
+			t.Errorf("accepted %s", path)
+		}
+	}
+}
