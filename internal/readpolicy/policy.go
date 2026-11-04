@@ -62,7 +62,7 @@ func allowedOwner(owner string, patterns []string) bool {
 }
 
 var commands = map[string]string{
-	"pr view": "comments,json,jq,template", "pr list": "state,author,assignee,base,head,label,limit,search,draft,json,jq,template", "pr diff": "name-only,patch,color", "pr checks": "json,jq,template,required,watch,interval,fail-fast", "issue view": "comments,json,jq,template", "issue list": "state,author,assignee,label,limit,search,milestone,mention,json,jq,template", "repo view": "json,jq,template", "label list": "limit,search,json,jq,template", "release list": "limit,exclude-drafts,exclude-pre-releases,json,jq,template", "release view": "json,jq,template", "run list": "branch,commit,event,limit,status,user,workflow,json,jq,template", "run view": "log,log-failed,job,attempt,exit-status,json,jq,template,verbose", "workflow list": "all,limit,json,jq,template", "workflow view": "ref,yaml,json,jq,template", "search issues": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search prs": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search commits": "repo,owner,limit,sort,order,author,committer,json,jq,template", "search code": "repo,owner,limit,filename,extension,language,json,jq,template",
+	"pr view": "comments,json,jq,template", "pr list": "state,author,assignee,base,head,label,limit,search,draft,json,jq,template", "pr diff": "name-only,patch,color", "pr checks": "json,jq,template,required,watch,interval,fail-fast", "issue view": "comments,json,jq,template", "issue list": "state,author,assignee,label,limit,search,milestone,mention,json,jq,template", "repo view": "json,jq,template", "label list": "limit,search,json,jq,template", "release list": "limit,exclude-drafts,exclude-pre-releases,json,jq,template", "release view": "json,jq,template", "run list": "branch,commit,event,limit,status,user,workflow,json,jq,template", "run view": "log,log-failed,job,attempt,exit-status,json,jq,template,verbose", "workflow list": "all,limit,json,jq,template", "workflow view": "ref,yaml", "search issues": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search prs": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search commits": "repo,owner,limit,sort,order,author,committer,json,jq,template", "search code": "repo,owner,limit,filename,extension,language,json,jq,template",
 }
 var bools = map[string]bool{"comments": true, "name-only": true, "patch": true, "draft": true, "required": true, "watch": true, "fail-fast": true, "log": true, "log-failed": true, "exit-status": true, "verbose": true, "all": true, "yaml": true, "exclude-drafts": true, "exclude-pre-releases": true}
 
@@ -268,6 +268,9 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 			} else if !strings.EqualFold(val, repo) {
 				return nil, errors.New("repository mismatch")
 			}
+			if key == "repo view" {
+				continue
+			}
 		case "owner":
 			if !allowedOwner(val, allowed) {
 				return nil, errors.New("owner is not fully allowed")
@@ -338,6 +341,12 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 			endpoint += "?" + rawQuery
 		}
 		return append([]string{"api", endpoint, "--method=GET"}, opts...), nil
+	}
+	if key == "repo view" {
+		if len(pos) != 0 {
+			return nil, errors.New("repo view does not accept a repository argument; use --repo")
+		}
+		return append([]string{"repo", "view", repo}, opts...), nil
 	}
 	if !strings.HasPrefix(key, "search ") {
 		for _, term := range pos {

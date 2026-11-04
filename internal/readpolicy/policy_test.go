@@ -1,6 +1,7 @@
 package readpolicy
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -376,7 +377,7 @@ func TestPhaseOneReadCommands(t *testing.T) {
 		{[]string{"pr", "checks", "123"}, []string{"--repo=o/r"}},
 		{[]string{"issue", "view", "123", "--comments"}, []string{"--comments", "--repo=o/r"}},
 		{[]string{"issue", "list", "--state", "open"}, []string{"--state=open", "--repo=o/r"}},
-		{[]string{"repo", "view"}, []string{"--repo=o/r"}},
+		{[]string{"repo", "view"}, []string{"o/r"}},
 		{[]string{"label", "list"}, []string{"--repo=o/r"}},
 		{[]string{"release", "list"}, []string{"--repo=o/r"}},
 		{[]string{"release", "view", "v1"}, []string{"--repo=o/r"}},
@@ -407,6 +408,26 @@ func TestPhaseOneReadCommands(t *testing.T) {
 			if !found {
 				t.Errorf("%v: missing %q in %v", tc.args, want, got)
 			}
+		}
+	}
+}
+
+func TestRepoViewUsesOnlyCheckedRepository(t *testing.T) {
+	for _, args := range [][]string{{"repo", "view", "secret"}, {"repo", "view", "other/repo"}, {"repo", "view", "github.com/o/r"}} {
+		if _, err := Parse(args, "o/r", "main", []string{"o/*"}); err == nil {
+			t.Errorf("accepted positional %v", args)
+		}
+	}
+	got, err := Parse([]string{"repo", "view", "--repo=o/r", "--json=isPrivate"}, "o/r", "main", []string{"o/*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, []string{"repo", "view", "o/r", "--json=isPrivate"}) {
+		t.Fatalf("unexpected canonical command: %v", got)
+	}
+	for _, arg := range []string{"--json=name", "--template={{.}}", "--jq=.name"} {
+		if _, err := Parse([]string{"workflow", "view", "ci.yml", arg}, "o/r", "main", []string{"o/*"}); err == nil {
+			t.Errorf("accepted workflow view flag %s", arg)
 		}
 	}
 }
