@@ -148,10 +148,7 @@ func Read(in io.Reader, out io.Writer) {
 	// gh normally prompts for a run when no ID or job is supplied. Since the
 	// service is noninteractive, select the newest run for the checkout branch.
 	if needsLatestRun(args) {
-		listArgs := []string{"run", "list", "--repo=" + q.Repo, "--limit=1", "--json=databaseId"}
-		if q.Branch != "" {
-			listArgs = append(listArgs, "--branch="+q.Branch)
-		}
+		listArgs := latestRunArgs(q.Repo, q.Branch)
 		cmd := exec.CommandContext(ctx, "gh", listArgs...)
 		cmd.Dir = tmp
 		cmd.Env = env
@@ -162,14 +159,12 @@ func Read(in io.Reader, out io.Writer) {
 			fail(fmt.Errorf("list workflow runs: %w", err))
 			return
 		}
-		var runs []struct {
-			DatabaseID uint64 `json:"databaseId"`
-		}
-		if err := json.Unmarshal(b.Bytes(), &runs); err != nil || len(runs) != 1 || runs[0].DatabaseID == 0 {
-			fail(fmt.Errorf("no workflow run found for this branch"))
+		id, err := latestRunID(b.Bytes())
+		if err != nil {
+			fail(err)
 			return
 		}
-		args = append(args[:2], append([]string{strconv.FormatUint(runs[0].DatabaseID, 10)}, args[2:]...)...)
+		args = append(args[:2], append([]string{strconv.FormatUint(id, 10)}, args[2:]...)...)
 	}
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = tmp
@@ -327,4 +322,21 @@ func setOutputDeadline(out io.Writer, duration time.Duration) {
 	if w, ok := out.(interface{ SetWriteDeadline(time.Time) error }); ok {
 		_ = w.SetWriteDeadline(time.Now().Add(duration))
 	}
+}
+
+func latestRunArgs(repo, branch string) []string {
+	args := []string{"run", "list", "--repo=" + repo, "--limit=1", "--json=databaseId"}
+	if branch != "" {
+		args = append(args, "--branch="+branch)
+	}
+	return args
+}
+func latestRunID(data []byte) (uint64, error) {
+	var runs []struct {
+		DatabaseID uint64 `json:"databaseId"`
+	}
+	if err := json.Unmarshal(data, &runs); err != nil || len(runs) != 1 || runs[0].DatabaseID == 0 {
+		return 0, fmt.Errorf("no workflow run found for this branch")
+	}
+	return runs[0].DatabaseID, nil
 }
