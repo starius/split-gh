@@ -192,3 +192,57 @@ func TestRealGHPRViewComments(t *testing.T) {
 		t.Fatalf("gh pr view: %q (%v), requests=%d requests=%q", output, err, requests.Load(), bodies)
 	}
 }
+
+func TestRealGHAcceptsAllowedFlags(t *testing.T) {
+	gh, err := exec.LookPath("gh")
+	if err != nil {
+		t.Skip("gh is not installed")
+	}
+	dir := t.TempDir()
+	values := map[string]string{"state": "open", "author": "alice", "assignee": "alice", "base": "main", "head": "topic", "label": "bug", "limit": "10", "search": "bug", "json": "number", "template": "{{.}}", "color": "never", "interval": "10", "milestone": "v1", "mention": "alice", "branch": "main", "commit": "abcdef", "event": "push", "status": "success", "user": "alice", "workflow": "ci.yml", "job": "1", "attempt": "1", "ref": "main", "repo": "o/r", "owner": "o", "sort": "created", "order": "asc", "committer": "alice", "filename": "file", "extension": "go", "language": "go"}
+	for command, flags := range commands {
+		t.Run(command, func(t *testing.T) {
+			for _, flag := range strings.Split(flags, ",") {
+				if flag == "jq" {
+					continue
+				} // handled in the untrusted client
+				args := strings.Fields(command)
+				switch command {
+				case "pr view", "pr diff", "pr checks", "issue view", "run view":
+					args = append(args, "1")
+				case "workflow view":
+					args = append(args, "ci.yml")
+				case "release view":
+					args = append(args, "v1")
+				case "search issues", "search prs", "search commits", "search code":
+					args = append(args, "query", "--repo=o/r")
+				}
+				value := values[flag]
+				if command == "search commits" && flag == "sort" {
+					value = "author-date"
+				}
+				option := "--" + flag
+				if !bools[flag] {
+					if value == "" {
+						t.Fatalf("missing test value for %s", flag)
+					}
+					option += "=" + value
+				}
+				args = append(args, option)
+				canonical, err := Parse(args, "o/r", "main", []string{"o/*"})
+				if err != nil {
+					t.Fatalf("%v: %v", args, err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				cmd := exec.CommandContext(ctx, gh, canonical...)
+				cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GH_CONFIG_DIR=" + dir, "GH_PROMPT_DISABLED=1", "HTTPS_PROXY=http://127.0.0.1:1", "NO_PROXY="}
+				out, err := cmd.CombinedOutput()
+				cancel()
+				exit, ok := err.(*exec.ExitError)
+				if !ok || exit.ExitCode() != 4 {
+					t.Errorf("%v: expected auth exit 4, got %v: %s", canonical, err, out)
+				}
+			}
+		})
+	}
+}
