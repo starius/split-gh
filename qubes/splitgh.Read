@@ -1,0 +1,4 @@
+#!/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+export PATH
+exec /usr/local/bin/split-gh serve read
