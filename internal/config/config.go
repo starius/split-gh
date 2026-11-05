@@ -24,6 +24,9 @@ type Qube struct {
 	// ReadRepos are the GitHub OWNER/REPO patterns the qube may read, with
 	// gh and with git fetch.
 	ReadRepos []string `json:"read_repos"`
+	// LocalRepos are repositories in gh-auth, relative to the home directory
+	// ("lnd" or "~/lnd"), that the qube may send patches for.
+	LocalRepos []string `json:"local_repos"`
 }
 
 // Load reads the config. Unknown fields are errors, so a typo can't
@@ -46,4 +49,15 @@ func Path(home, p string) string {
 		return filepath.Join(home, p[2:])
 	}
 	return p
+}
+
+// AllowsLocal reports whether rel, a clean path relative to the home
+// directory, is one of the qube's local repositories.
+func (q Qube) AllowsLocal(rel string) bool {
+	for _, r := range q.LocalRepos {
+		if filepath.Clean(strings.TrimPrefix(r, "~/")) == rel {
+			return true
+		}
+	}
+	return false
 }

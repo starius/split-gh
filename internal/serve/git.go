@@ -24,7 +24,7 @@ const (
 
 // pushRefusal is what git shows the agent, as "remote:" lines, for a push.
 const pushRefusal = `This qube can't push to GitHub; split-gh only fetches.
-Only the user pushes.`
+Hand over commits with split-gh send. The user reviews, signs and pushes them.`
 
 // gitPath matches the requests of git's smart HTTP protocol: the two of a
 // fetch, and a push's, which is refused.

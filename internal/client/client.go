@@ -31,8 +31,9 @@ gh repo clone and gh pr checkout, use git clone https://github.com/OWNER/REPO
 and git fetch origin pull/NUMBER/head.
 
 You can't write to GitHub: no push, PR, comment, review, edit or merge. The
-user does that. For a PR description or a comment, write the text in your
-reply for the user to post.
+user does that. To hand over commits, commit in a git worktree, run
+split-gh send there and show the user the commands it prints. For a PR
+description or a comment, write the text in your reply for the user to post.
 `
 
 // remoteRE matches GitHub remote URLs, also as insteadOf makes them for the
