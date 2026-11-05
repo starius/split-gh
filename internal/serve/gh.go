@@ -21,12 +21,8 @@ import (
 	"split-gh/internal/wire"
 )
 
-const (
-	// ghTimeout bounds all the gh runs of one request.
-	ghTimeout = 60 * time.Second
-	// writeTimeout ends a request whose client stopped reading.
-	writeTimeout = 30 * time.Second
-)
+// ghTimeout bounds all the gh runs of one request.
+const ghTimeout = 60 * time.Second
 
 // serveGH answers POST /gh: one gh read, described by a wire.Request. A
 // refusal is an HTTP error with the reason as text. Once gh runs, the answer
@@ -40,7 +36,7 @@ func (q *qube) serveGH(w http.ResponseWriter, r *http.Request) {
 	}()
 	refuse := func(status int, msg string) {
 		outcome = "refused: " + msg
-		http.Error(w, msg, status)
+		fail(w, msg, status)
 	}
 	if r.Method != http.MethodPost {
 		refuse(http.StatusMethodNotAllowed, "use POST")

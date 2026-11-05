@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"split-gh/internal/wire"
 )
@@ -219,4 +222,64 @@ func TestTerminalLines(t *testing.T) {
 			t.Fatalf("terminal got %U", c)
 		}
 	}
+}
+
+// smallBuffers gives the server's connections a small send buffer, so a
+// client that stops reading soon blocks the server's writes.
+type smallBuffers struct{ net.Listener }
+
+func (l smallBuffers) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if tc, ok := c.(*net.TCPConn); ok {
+		_ = tc.SetWriteBuffer(4096)
+	}
+	return c, err
+}
+
+// A client that stops reading must not keep its slot: here a refusal that
+// echoes a long field name blocks, and only a write deadline ends it.
+func TestStalledClientFreesItsSlot(t *testing.T) {
+	old := writeTimeout
+	writeTimeout = time.Second
+	t.Cleanup(func() { writeTimeout = old })
+	fakeGH(t, "#!/bin/sh\necho ok\n")
+	d := newTestDaemon(t, "{"+qubeJSON("ai", 8401, "o/r")+"}")
+	q := d.qubes["ai"]
+	q.gh = newLimiter(1000, 1)
+	srv := httptest.NewUnstartedServer(q)
+	srv.Listener = smallBuffers{srv.Listener}
+	srv.Start()
+	defer srv.Close()
+
+	dialer := net.Dialer{Control: func(_, _ string, c syscall.RawConn) error {
+		return c.Control(func(fd uintptr) { _ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 4096) })
+	}}
+	conn, err := dialer.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	body := `{"v":1,"` + strings.Repeat("x", 60000) + `":1}`
+	fmt.Fprintf(conn, "POST /gh HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s-ai\r\nContent-Length: %d\r\n\r\n%s", testPassword, len(body), body)
+
+	// The stalled request holds the only slot, then loses it.
+	held := false
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		b, _ := json.Marshal(wire.Request{V: 1, Repo: "o/r", Argv: []string{"pr", "view", "1"}})
+		req, _ := http.NewRequest("POST", srv.URL+"/gh", bytes.NewReader(b))
+		req.Header.Set("Authorization", "Bearer "+testPassword+"-ai")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		switch {
+		case resp.StatusCode == http.StatusTooManyRequests:
+			held = true
+		case resp.StatusCode == http.StatusOK && held:
+			return
+		}
+	}
+	t.Fatalf("the stalled request kept its slot (seen held: %v)", held)
 }

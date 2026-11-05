@@ -40,7 +40,7 @@ func (q *qube) serveGit(w http.ResponseWriter, r *http.Request) {
 	defer func() { q.printf("git %s -> %s (%.1fs)", what, outcome, time.Since(started).Seconds()) }()
 	refuse := func(status int, msg string) {
 		outcome = "refused: " + strings.TrimPrefix(strings.SplitN(msg, "\n", 2)[0], "split-gh: ")
-		http.Error(w, msg, status)
+		fail(w, msg, status)
 	}
 	m := gitPath.FindStringSubmatch(r.URL.Path)
 	if m == nil {

@@ -203,6 +203,8 @@ them, and apply refuses it unless you pass `--force`.
 - gh: 60 requests a minute, 8 at once, and 60 s of gh for each.
 - git: 120 requests a minute, 4 at once, 30 minutes each, and a minute
   without data ends one. A fetch takes two to four requests.
+- Any request: a client that stops reading for 30 s, or takes longer than
+  that to send its request, is cut off, so it can't hold a slot.
 
 serve writes to `~/.local/state/split-gh/log.jsonl` in gh-auth. Requests over
 the rate or concurrency limit aren't logged, so they can't fill the disk.

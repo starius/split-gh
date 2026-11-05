@@ -36,8 +36,12 @@ const (
 	minPassword = 16
 )
 
-// bodyTimeout bounds reading a request body; tests shorten it.
-var bodyTimeout = 30 * time.Second
+// bodyTimeout bounds reading a request body, and writeTimeout each write of
+// an answer. Tests shorten them.
+var (
+	bodyTimeout  = 30 * time.Second
+	writeTimeout = 30 * time.Second
+)
 
 // daemon is what the qubes' handlers share.
 type daemon struct {
@@ -175,11 +179,15 @@ func readSecret(path string) (string, error) {
 // ServeHTTP checks the limits and the password, then answers a gh read
 // (POST /gh) or a git fetch (any other path).
 func (q *qube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// A client that stops reading can't hold a request, and its slot: every
+	// write has a deadline. Answers that stream move it on with each write.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Now().Add(writeTimeout))
 	// A body must arrive in time, also one that no handler reads: the
 	// server reads what's left of it before answering. readBody lifts the
 	// deadline once the body is in.
 	if r.ContentLength != 0 {
-		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyTimeout))
+		_ = rc.SetReadDeadline(time.Now().Add(bodyTimeout))
 	}
 	isGH := r.URL.Path == "/gh"
 	l := q.git
@@ -189,14 +197,14 @@ func (q *qube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Requests over the limits aren't logged, so they can't fill the log.
 	release, refusal := l.take(time.Now())
 	if refusal != "" {
-		http.Error(w, refusal, http.StatusTooManyRequests)
+		fail(w, refusal, http.StatusTooManyRequests)
 		return
 	}
 	defer release()
 	// Never 401: git would ask for a password.
 	if !q.authorized(r) {
 		q.printf("refused a request with a wrong password")
-		http.Error(w, "split-gh: wrong password; the agent qube has it in ~/.config/split-gh/password", http.StatusForbidden)
+		fail(w, "split-gh: wrong password; the agent qube has it in ~/.config/split-gh/password", http.StatusForbidden)
 		return
 	}
 	if isGH {
@@ -204,6 +212,13 @@ func (q *qube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		q.serveGit(w, r)
 	}
+}
+
+// fail answers with an error text. Like every write, it has a deadline,
+// counted from now: a refusal can come late, after GitHub answered.
+func fail(w http.ResponseWriter, msg string, status int) {
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(writeTimeout))
+	http.Error(w, msg, status)
 }
 
 // readBody reads a request body of at most limit bytes, and then lifts the
