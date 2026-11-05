@@ -422,3 +422,31 @@ func TestApplyMovesBranchAndMarkerTogether(t *testing.T) {
 		t.Fatal("marker not set")
 	}
 }
+
+// Filters run commands the user configured, on the files that
+// .gitattributes picks. A command given as a relative path runs from the
+// worktree: it is the agent's file.
+func TestApplyRunsNoFilters(t *testing.T) {
+	q := newQubes(t)
+	ran := filepath.Join(q.auth, "ran")
+	q.authGit("config", "filter.demo.clean", "./scripts/filter")
+	q.authGit("config", "filter.demo.smudge", "./scripts/filter")
+	q.authGit("config", "filter.demo.required", "true")
+	script := filepath.Join(q.agent, "scripts/filter")
+	write(t, script, "#!/bin/sh\necho ran >> "+ran+"\ncat\n")
+	if err := os.Chmod(script, 0755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(q.agent, ".gitattributes"), "*.dat filter=demo\n")
+	q.git(q.ai, q.agent, "add", ".")
+	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Add a filter")
+	q.apply(q.send())
+	q.commit("x.dat", "data\n", "Add data")
+	q.apply(q.send())
+	if b, err := os.ReadFile(ran); err == nil {
+		t.Fatalf("apply ran the agent's filter:\n%s", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(q.auth, "lnd/fix-foo/x.dat")); string(b) != "data\n" {
+		t.Fatalf("x.dat is %q", b)
+	}
+}

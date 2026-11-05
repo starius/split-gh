@@ -180,9 +180,9 @@ Run them in gh-auth:
   checks that they reproduce the patch exactly, then prints the push command.
   It refuses if the worktree has uncommitted changes. It also refuses to drop
   commits it didn't put on the branch, such as your own edits, unless you pass
-  `--force`. No git hook runs during apply, yours included: with a relative
-  `core.hooksPath`, git would take hooks from the worktree, which holds the
-  agent's files.
+  `--force`. No git hook or filter runs during apply, yours included: with a
+  relative `core.hooksPath`, or a filter configured as a relative path, git
+  would run them from the worktree, which holds the agent's files.
 
 What send sends: the commits on the current branch that no remote has, so
 `git rev-list HEAD --not --remotes`; or the ones after `--base COMMIT`. Their

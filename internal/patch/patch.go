@@ -245,23 +245,67 @@ func IDs(commits []Commit) []string {
 	return ids
 }
 
-// noPrograms keeps git from running programs that the files in a worktree
-// can name: hooks, which a relative core.hooksPath looks for in the
-// worktree, and an fsmonitor hook. In gh-auth, the worktree holds the
-// agent's files. So no hook runs, the user's own included.
-var noPrograms = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
-
-// Command is exec.Command for git in dir, with noPrograms. Every git that
-// split-gh runs is started here.
-func Command(dir string, args ...string) *exec.Cmd {
-	cmd := exec.Command("git", append(append([]string{}, noPrograms...), args...)...)
+// Command is exec.Command for git in dir. Every git that split-gh runs is
+// started here, so that git runs no program that the files in a worktree
+// can name or pick. In gh-auth, the worktree holds the agent's files. So:
+//   - no hooks: a relative core.hooksPath looks for them in the worktree;
+//   - no fsmonitor hook, for the same reason;
+//   - no filters: .gitattributes picks a file's filter driver, and a driver
+//     configured as a relative path runs from the worktree.
+//
+// The user's own hooks and filters don't run either.
+func Command(dir string, args ...string) (*exec.Cmd, error) {
+	safe := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
+	drivers, err := filterDrivers(dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range drivers {
+		safe = append(safe, "-c", "filter."+d+".clean=", "-c", "filter."+d+".smudge=",
+			"-c", "filter."+d+".process=", "-c", "filter."+d+".required=false")
+	}
+	cmd := exec.Command("git", append(safe, args...)...)
 	cmd.Dir = dir
-	return cmd
+	return cmd, nil
+}
+
+// filterDrivers lists the filter drivers in git's configuration for dir.
+func filterDrivers(dir string) ([]string, error) {
+	cmd := exec.Command("git", "config", "--null", "--name-only", "--get-regexp", `^filter\.`)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(out) == 0 {
+		return nil, nil // none configured
+	}
+	if err != nil {
+		return nil, fmt.Errorf("git config: %v", err)
+	}
+	var drivers []string
+	seen := map[string]bool{}
+	for _, key := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		// filter.DRIVER.VARIABLE, and DRIVER may contain dots.
+		name := strings.TrimPrefix(key, "filter.")
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[:i]
+		}
+		if strings.Contains(name, "=") {
+			return nil, fmt.Errorf("can't turn off filter driver %q, as its name has a =", name)
+		}
+		if !seen[name] {
+			seen[name] = true
+			drivers = append(drivers, name)
+		}
+	}
+	return drivers, nil
 }
 
 // Git runs git in dir and returns its standard output. A nil env inherits.
 func Git(dir string, env []string, args ...string) (string, error) {
-	cmd := Command(dir, args...)
+	cmd, err := Command(dir, args...)
+	if err != nil {
+		return "", err
+	}
 	cmd.Env = env
 	var out, stderr bytes.Buffer
 	cmd.Stdout = &out

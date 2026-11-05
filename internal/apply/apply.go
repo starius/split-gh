@@ -350,7 +350,10 @@ func (p *plan) setRefs(from, to [2]string) error {
 			fmt.Fprintf(&script, "update %s %s %s\n", ref, to[i], old)
 		}
 	}
-	cmd := patch.Command(p.repo, "update-ref", "-m", "split-gh apply", "--stdin")
+	cmd, err := patch.Command(p.repo, "update-ref", "-m", "split-gh apply", "--stdin")
+	if err != nil {
+		return err
+	}
 	cmd.Stdin = strings.NewReader(script.String())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git update-ref: %s", patch.Visible(strings.TrimSpace(string(out))))
@@ -374,7 +377,10 @@ func (p *plan) commit() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		cmd := patch.Command(p.worktree, append(append([]string{}, patch.AmArgs...), "--gpg-sign", f.Name())...)
+		cmd, err := patch.Command(p.worktree, append(append([]string{}, patch.AmArgs...), "--gpg-sign", f.Name())...)
+		if err != nil {
+			return "", err
+		}
 		cmd.Stdin = os.Stdin
 		if out, err := cmd.CombinedOutput(); err != nil {
 			patch.Git(p.worktree, nil, "am", "--abort")
