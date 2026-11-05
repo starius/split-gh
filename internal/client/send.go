@@ -148,7 +148,7 @@ func roundTrip(dir, base string, texts []string) error {
 	}
 	defer os.RemoveAll(tmp)
 	wt := filepath.Join(tmp, "wt")
-	if _, err := run(dir, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--quiet", "--detach", wt, base); err != nil {
+	if _, err := run(dir, "worktree", "add", "--quiet", "--detach", wt, base); err != nil {
 		return err
 	}
 	defer run(dir, "worktree", "remove", "--force", wt)

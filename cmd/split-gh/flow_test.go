@@ -54,10 +54,12 @@ type qubes struct {
 	t        *testing.T
 	bin      string
 	ai, auth string // home directories
+	agent    string // the agent's worktree
 }
 
 func newQubes(t *testing.T) *qubes {
 	q := &qubes{t: t, bin: binDir(t), ai: t.TempDir(), auth: t.TempDir()}
+	q.agent = filepath.Join(q.ai, "lnd/fix-foo")
 	write(t, filepath.Join(q.ai, ".gitconfig"), "[user]\n\tname = Agent\n\temail = agent@ai\n[init]\n\tdefaultBranch = master\n")
 	write(t, filepath.Join(q.auth, ".gitconfig"), "[user]\n\tname = User\n\temail = user@auth\n[gpg]\n\tprogram = "+filepath.Join(q.bin, "fake-gpg")+"\n[init]\n\tdefaultBranch = master\n")
 	write(t, filepath.Join(q.auth, ".config/split-gh/config.json"), `{"qubes":{"ai":{"local_repos":["lnd"]}}}`)
@@ -108,16 +110,15 @@ func (q *qubes) git(home, dir string, args ...string) string {
 
 // commit makes a commit in the agent's worktree.
 func (q *qubes) commit(file, content, message string) {
-	wt := filepath.Join(q.ai, "lnd/fix-foo")
-	write(q.t, filepath.Join(wt, file), content)
-	q.git(q.ai, wt, "add", file)
-	q.git(q.ai, wt, "commit", "--quiet", "-m", message)
+	write(q.t, filepath.Join(q.agent, file), content)
+	q.git(q.ai, q.agent, "add", file)
+	q.git(q.ai, q.agent, "commit", "--quiet", "-m", message)
 }
 
 // send runs split-gh send in the agent's worktree and returns the patch path.
 func (q *qubes) send(args ...string) string {
 	q.t.Helper()
-	out, err := q.run(q.ai, filepath.Join(q.ai, "lnd/fix-foo"), filepath.Join(q.bin, "split-gh"), append([]string{"send"}, args...)...)
+	out, err := q.run(q.ai, q.agent, filepath.Join(q.bin, "split-gh"), append([]string{"send"}, args...)...)
 	if err != nil {
 		q.t.Fatalf("send: %v\n%s", err, out)
 	}
@@ -326,5 +327,30 @@ func TestFailedApplyChangesNothing(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(userWT, "b.txt")); string(b) != "untracked\n" {
 		t.Fatalf("untracked file changed: %q", b)
+	}
+}
+
+// The worktree holds the agent's files. A relative core.hooksPath or
+// core.fsmonitor would make git run programs from it.
+func TestApplyRunsNoHooks(t *testing.T) {
+	q := newQubes(t)
+	ran := filepath.Join(q.auth, "ran")
+	q.authGit("config", "core.hooksPath", ".githooks")
+	q.authGit("config", "core.fsmonitor", ".githooks/fsmonitor")
+	for _, name := range []string{"post-checkout", "reference-transaction", "fsmonitor"} {
+		hook := filepath.Join(q.agent, ".githooks", name)
+		write(t, hook, "#!/bin/sh\necho "+name+" >> "+ran+"\n")
+		if err := os.Chmod(hook, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q.git(q.ai, q.agent, "add", ".githooks")
+	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Add hooks")
+	q.apply(q.send())
+	// Now the worktree in gh-auth has the hooks, for the next apply.
+	q.commit("a.txt", "one\n", "Add a")
+	q.apply(q.send())
+	if b, err := os.ReadFile(ran); err == nil {
+		t.Fatalf("apply ran the agent's programs:\n%s", b)
 	}
 }

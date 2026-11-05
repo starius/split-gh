@@ -352,8 +352,7 @@ func (p *plan) commit() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		cmd := exec.Command("git", append(append([]string{}, patch.AmArgs...), "--gpg-sign", f.Name())...)
-		cmd.Dir = p.worktree
+		cmd := patch.Command(p.worktree, append(append([]string{}, patch.AmArgs...), "--gpg-sign", f.Name())...)
 		cmd.Stdin = os.Stdin
 		if out, err := cmd.CombinedOutput(); err != nil {
 			patch.Git(p.worktree, nil, "am", "--abort")

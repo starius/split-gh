@@ -130,7 +130,7 @@ var formatArgs = []string{"format-patch", "--stdout", "--zero-commit", "--no-sig
 
 // AmArgs apply patches exactly as written, whatever the user's configuration.
 // A patch that `git am` would still change is caught by comparing the result.
-var AmArgs = []string{"-c", "core.hooksPath=/dev/null", "am", "--quiet", "--keep", "--keep-cr", "--no-3way",
+var AmArgs = []string{"am", "--quiet", "--keep", "--keep-cr", "--no-3way",
 	"--no-message-id", "--no-scissors", "--whitespace=nowarn"}
 
 // Format returns each commit's patch text, in the order given. The text is
@@ -245,10 +245,23 @@ func IDs(commits []Commit) []string {
 	return ids
 }
 
+// noPrograms keeps git from running programs that the files in a worktree
+// can name: hooks, which a relative core.hooksPath looks for in the
+// worktree, and an fsmonitor hook. In gh-auth, the worktree holds the
+// agent's files. So no hook runs, the user's own included.
+var noPrograms = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
+
+// Command is exec.Command for git in dir, with noPrograms. Every git that
+// split-gh runs is started here.
+func Command(dir string, args ...string) *exec.Cmd {
+	cmd := exec.Command("git", append(append([]string{}, noPrograms...), args...)...)
+	cmd.Dir = dir
+	return cmd
+}
+
 // Git runs git in dir and returns its standard output. A nil env inherits.
 func Git(dir string, env []string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
+	cmd := Command(dir, args...)
 	cmd.Env = env
 	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
