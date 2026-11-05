@@ -450,3 +450,29 @@ func TestApplyRunsNoFilters(t *testing.T) {
 		t.Fatalf("x.dat is %q", b)
 	}
 }
+
+// When apply goes back to an older commit, git would overwrite an ignored
+// file of the user's that the older commit tracks.
+func TestApplyKeepsIgnoredFiles(t *testing.T) {
+	q := newQubes(t)
+	q.commit("cache.dat", "tracked\n", "Track the cache")
+	q.apply(q.send())
+	q.git(q.ai, q.agent, "rm", "--quiet", "cache.dat")
+	q.commit(".gitignore", "cache.dat\n", "Ignore the cache")
+	q.apply(q.send())
+	mine := filepath.Join(q.auth, "lnd/fix-foo/cache.dat")
+	write(t, mine, "mine\n")
+	// A rewrite of the last commit: apply starts from the first one, which
+	// tracks cache.dat.
+	q.git(q.ai, q.agent, "commit", "--quiet", "--amend", "-m", "Ignore the cache, reworded")
+	tip := q.authGit("rev-parse", "refs/heads/fix-foo")
+	if out, err := q.splitgh(q.auth, "apply", q.send()); err == nil || !strings.Contains(out, "cache.dat") {
+		t.Fatalf("apply: %v\n%s", err, out)
+	}
+	if b, _ := os.ReadFile(mine); string(b) != "mine\n" {
+		t.Fatalf("the user's file is now %q", b)
+	}
+	if q.authGit("rev-parse", "refs/heads/fix-foo") != tip {
+		t.Fatal("the branch moved")
+	}
+}
