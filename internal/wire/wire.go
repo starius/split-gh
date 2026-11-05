@@ -8,40 +8,32 @@ import (
 	"io"
 )
 
-const MaxHeader = 64 << 10
+const MaxRequest = 64 << 10
 const MaxOutput = 16 << 20
 
-func ReadRequest(r io.Reader) (Request, error) {
+// DecodeRequest strictly decodes the body of POST /gh: one JSON object with
+// known fields only, and version 1.
+func DecodeRequest(b []byte) (Request, error) {
 	var q Request
-	// Read only the header so any following binary payload remains available.
-	line := make([]byte, 0, 1024)
-	var one [1]byte
-	for len(line) < MaxHeader {
-		if _, err := io.ReadFull(r, one[:]); err != nil {
-			return q, errors.New("invalid or oversized header")
-		}
-		line = append(line, one[0])
-		if one[0] == '\n' {
-			break
-		}
+	if len(b) > MaxRequest {
+		return q, errors.New("request too large")
 	}
-	if len(line) == 0 || line[len(line)-1] != '\n' {
-		return q, errors.New("invalid or oversized header")
-	}
-	d := json.NewDecoder(bytes.NewReader(line))
+	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
-	if e := d.Decode(&q); e != nil {
-		return q, e
+	if err := d.Decode(&q); err != nil {
+		return q, err
 	}
 	var extra any
 	if d.Decode(&extra) != io.EOF {
-		return q, errors.New("trailing JSON")
+		return q, errors.New("trailing data")
 	}
 	if q.V != 1 {
 		return q, errors.New("unsupported version")
 	}
 	return q, nil
 }
+
+// Frame writes one frame: its kind, its length and the bytes.
 func Frame(w io.Writer, k byte, b []byte) error {
 	var h [5]byte
 	h[0] = k
@@ -58,6 +50,9 @@ func Frame(w io.Writer, k byte, b []byte) error {
 	}
 	return nil
 }
+
+// Receive copies the frames of an answer to out and errout, and returns the
+// exit status.
 func Receive(r io.Reader, out, errout io.Writer) (int, error) {
 	var total uint64
 	for {
@@ -75,17 +70,12 @@ func Receive(r io.Reader, out, errout io.Writer) (int, error) {
 			return 1, e
 		}
 		switch h[0] {
-		case 'o', 'j':
-			if h[0] == 'j' && !json.Valid(b) {
-				return 1, errors.New("invalid JSON frame")
+		case 'o', 'e':
+			w := out
+			if h[0] == 'e' {
+				w = errout
 			}
-			if n, err := out.Write(b); err != nil {
-				return 1, err
-			} else if n != len(b) {
-				return 1, io.ErrShortWrite
-			}
-		case 'e':
-			if n, err := errout.Write(b); err != nil {
+			if n, err := w.Write(b); err != nil {
 				return 1, err
 			} else if n != len(b) {
 				return 1, io.ErrShortWrite

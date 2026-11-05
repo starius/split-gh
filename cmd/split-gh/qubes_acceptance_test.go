@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,24 +18,33 @@ import (
 	"split-gh/internal/wire"
 )
 
-// TestQubesPrivateRead is opt-in: it talks to the installed trusted service
-// and GitHub. The refused POST targets a route that has no POST operation and
-// has no body, so it cannot create a comment even if the service is broken.
+// TestQubesPrivateRead is opt-in: it runs in the agent qube and talks to
+// split-gh serve in gh-auth, and through it to GitHub. Nothing it sends can
+// write: the refused POST targets a route that has no POST operation and
+// has no body.
 func TestQubesPrivateRead(t *testing.T) {
 	repoInput := os.Getenv("SPLIT_GH_E2E_REPO")
 	number := os.Getenv("SPLIT_GH_E2E_PR")
-	qube := os.Getenv("SPLIT_GH_E2E_QUBE")
 	checkout := os.Getenv("SPLIT_GH_E2E_CHECKOUT")
-	if repoInput == "" && number == "" && qube == "" && checkout == "" {
-		t.Skip("set SPLIT_GH_E2E_REPO, SPLIT_GH_E2E_PR, SPLIT_GH_E2E_QUBE and SPLIT_GH_E2E_CHECKOUT to run the Qubes acceptance test")
+	if repoInput == "" && number == "" && checkout == "" {
+		t.Skip("set SPLIT_GH_E2E_REPO, SPLIT_GH_E2E_PR and SPLIT_GH_E2E_CHECKOUT to run the Qubes acceptance test")
 	}
 	repo, ok := readpolicy.CanonicalRepo(repoInput)
 	pr, err := strconv.Atoi(number)
-	if !ok || err != nil || pr < 1 || strconv.Itoa(pr) != number || qube == "" || !filepath.IsAbs(checkout) {
-		t.Fatal("provide a GitHub repository, positive PR number, target qube and absolute checkout path")
+	if !ok || err != nil || pr < 1 || strconv.Itoa(pr) != number || !filepath.IsAbs(checkout) {
+		t.Fatal("provide a GitHub repository, positive PR number and absolute checkout path")
 	}
-	if _, err = exec.LookPath("qrexec-client-vm"); err != nil {
-		t.Fatalf("qrexec-client-vm unavailable: %v", err)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, err := os.ReadFile(filepath.Join(home, ".config/split-gh/password"))
+	if err != nil {
+		t.Fatalf("the agent qube has no password: %v", err)
+	}
+	port := os.Getenv("SPLIT_GH_PORT")
+	if port == "" {
+		port = "8401"
 	}
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "split-gh")
@@ -45,7 +56,7 @@ func TestQubesPrivateRead(t *testing.T) {
 	if err = os.Symlink(binary, shim); err != nil {
 		t.Fatal(err)
 	}
-	env := append(os.Environ(), "SPLIT_GH_QUBE="+qube, "GH_REPO=")
+	env := append(os.Environ(), "GH_REPO=")
 	for _, tc := range []struct {
 		name                                string
 		args                                []string
@@ -109,24 +120,25 @@ func TestQubesPrivateRead(t *testing.T) {
 		{"comment", []string{"pr", "comment", number}, "not allowed"},
 	} {
 		t.Run("forged "+tc.name, func(t *testing.T) {
-			var header bytes.Buffer
-			if err := json.NewEncoder(&header).Encode(wire.Request{V: 1, Repo: repo, Argv: tc.args}); err != nil {
+			body, err := json.Marshal(wire.Request{V: 1, Repo: repo, Argv: tc.args})
+			if err != nil {
 				t.Fatal(err)
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, "qrexec-client-vm", qube, "splitgh.Read")
-			cmd.Stdin = &header
-			var response, transportErr bytes.Buffer
-			cmd.Stdout = &response
-			cmd.Stderr = &transportErr
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("qrexec failed: %v; stderr=%q", err, transportErr.String())
+			req, err := http.NewRequestWithContext(ctx, "POST", "http://127.0.0.1:"+port+"/gh", bytes.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
 			}
-			var stdout, stderr bytes.Buffer
-			status, err := wire.Receive(&response, &stdout, &stderr)
-			if err != nil || status == 0 || stdout.Len() != 0 || !strings.Contains(stderr.String(), tc.message) {
-				t.Fatalf("server did not refuse %s: status=%d stderr=%q framing=%v", tc.name, status, stderr.String(), err)
+			req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(password)))
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("split-gh serve unreachable: %v", err)
+			}
+			answer, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden || !strings.Contains(string(answer), tc.message) {
+				t.Fatalf("server did not refuse %s: %d %q", tc.name, resp.StatusCode, answer)
 			}
 		})
 	}
@@ -136,7 +148,6 @@ func TestQubesPrivateRead(t *testing.T) {
 // GitHub. The named fixtures must exist in the same private repository.
 func TestQubesAllReadCommands(t *testing.T) {
 	repoInput := os.Getenv("SPLIT_GH_E2E_REPO")
-	qube := os.Getenv("SPLIT_GH_E2E_QUBE")
 	checkout := os.Getenv("SPLIT_GH_E2E_CHECKOUT")
 	pr := os.Getenv("SPLIT_GH_E2E_PR")
 	issue := os.Getenv("SPLIT_GH_E2E_ISSUE")
@@ -149,11 +160,8 @@ func TestQubesAllReadCommands(t *testing.T) {
 	}
 	repo, ok := readpolicy.CanonicalRepo(repoInput)
 	positive := func(s string) bool { n, err := strconv.Atoi(s); return err == nil && n > 0 && strconv.Itoa(n) == s }
-	if !ok || qube == "" || !filepath.IsAbs(checkout) || !positive(pr) || !positive(issue) || !positive(run) || workflow == "" || release == "" {
-		t.Fatal("provide the repository, qube, checkout, positive PR, issue and run IDs, workflow and release fixture variables")
-	}
-	if _, err := exec.LookPath("qrexec-client-vm"); err != nil {
-		t.Fatalf("qrexec-client-vm unavailable: %v", err)
+	if !ok || !filepath.IsAbs(checkout) || !positive(pr) || !positive(issue) || !positive(run) || workflow == "" || release == "" {
+		t.Fatal("provide the repository, checkout, positive PR, issue and run IDs, workflow and release fixture variables")
 	}
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "split-gh")
@@ -196,7 +204,7 @@ func TestQubesAllReadCommands(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, shim, tc.args...)
 			cmd.Dir = checkout
-			cmd.Env = append(os.Environ(), "SPLIT_GH_QUBE="+qube, "GH_REPO=")
+			cmd.Env = append(os.Environ(), "GH_REPO=")
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout
 			cmd.Stderr = &stderr

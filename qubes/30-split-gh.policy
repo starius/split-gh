@@ -1,2 +1,4 @@
-splitgh.Read * ai gh-auth allow
-splitgh.Read * @anyvm @anyvm deny
+# Only ai may connect to split-gh serve's port in gh-auth. Give each further
+# agent qube its own port, here and in gh-auth's config.json.
+qubes.ConnectTCP +8401 ai gh-auth allow
+qubes.ConnectTCP +8401 @anyvm @anyvm deny

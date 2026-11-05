@@ -17,8 +17,8 @@ import (
 	"time"
 )
 
-// Uses real gh, the built shim and service, and a qrexec stand-in. GitHub is
-// represented by an HTTPS fixture; no credentials or external network are used.
+// Uses real gh, the built shim and split-gh serve. GitHub is represented by
+// an HTTPS fixture; no credentials or external network are used.
 func TestReadPathWithRealGH(t *testing.T) {
 	gh, err := exec.LookPath("gh")
 	if err != nil {
@@ -116,11 +116,14 @@ func TestReadPathWithRealGH(t *testing.T) {
 	}
 	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 	write(filepath.Join(clientDir, "git"), "#!/bin/sh\ncase \"$*\" in 'remote get-url -- origin') echo https://github.com/o/r.git;; 'branch --show-current') echo main;; esac\n")
-	write(filepath.Join(clientDir, "qrexec-client-vm"), "#!/bin/sh\nexport QREXEC_REMOTE_DOMAIN=ai\nexport PATH="+quote(serverDir)+"\nexec "+quote(binary)+" serve read\n")
 	write(filepath.Join(serverDir, "gh"), "#!/bin/sh\nexport GH_HOST="+quote(strings.TrimPrefix(server.URL, "https://"))+"\nexport GH_ENTERPRISE_TOKEN=\"$GH_TOKEN\"\nexport SSL_CERT_FILE="+quote(cert)+"\nexport NO_PROXY='*'\nexec "+quote(gh)+" \"$@\"\n")
-	write(filepath.Join(home, ".config/split-gh/config.json"), `{"qubes":{"ai":{"read_repos":["o/r"]}},"read_token_file":"~/token"}`)
+	port := freePort(t)
+	write(filepath.Join(home, ".config/split-gh/config.json"), serveConfig(port, "o/r"))
 	write(filepath.Join(home, "token"), "test-token")
-	env := append(os.Environ(), "PATH="+clientDir, "HOME="+home, "GH_REPO=")
+	write(filepath.Join(home, "ai.password"), "a-long-enough-password")
+	write(filepath.Join(home, ".config/split-gh/password"), "a-long-enough-password")
+	startServe(t, binary, []string{"PATH=" + serverDir, "HOME=" + home})
+	env := append(os.Environ(), "PATH="+clientDir, "HOME="+home, "GH_REPO=", "SPLIT_GH_PORT="+port)
 	for _, tc := range []struct {
 		args []string
 		want string
