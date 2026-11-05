@@ -26,13 +26,18 @@ read-only token, and most read commands work as usual: gh pr view, gh pr diff,
 gh pr checks, gh pr list, gh issue view, gh run view --log-failed,
 gh search ... --repo OWNER/REPO, and gh api repos/OWNER/REPO/... (GET only).
 For review threads with their resolved state, use gh pr threads NUMBER.
+git clone and git fetch from GitHub work too, through gh-auth. Instead of
+gh repo clone and gh pr checkout, use git clone https://github.com/OWNER/REPO
+and git fetch origin pull/NUMBER/head.
 
 You can't write to GitHub: no push, PR, comment, review, edit or merge. The
 user does that. For a PR description or a comment, write the text in your
 reply for the user to post.
 `
 
-var remoteRE = regexp.MustCompile(`(?i)^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)([^/]+/[^/]+?)(?:\.git)?/?$`)
+// remoteRE matches GitHub remote URLs, also as insteadOf makes them for the
+// split-gh port: git remote get-url applies insteadOf.
+var remoteRE = regexp.MustCompile(`(?i)^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:|http://127\.0\.0\.1:[0-9]+/)([^/]+/[^/]+?)(?:\.git)?/?$`)
 
 func git(args ...string) string {
 	b, e := exec.Command("git", args...).Output()

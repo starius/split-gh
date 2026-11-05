@@ -1,7 +1,7 @@
 // Package serve is split-gh serve, which the user runs in gh-auth. It
 // answers the agent qubes, each on its own port on 127.0.0.1, which dom0's
-// qubes.ConnectTCP policy lets only that qube reach. It only reads GitHub,
-// running gh with a read-only token.
+// qubes.ConnectTCP policy lets only that qube reach. It only reads GitHub:
+// gh with a read-only token, and git fetches.
 package serve
 
 import (
@@ -29,6 +29,9 @@ const (
 	ghPerMinute = 60
 	// ghSlots bounds concurrent gh runs; each one takes about 40 MB.
 	ghSlots = 8
+	// A fetch is a few requests.
+	gitPerMinute = 120
+	gitSlots     = 4
 	// minPassword is the shortest password serve accepts.
 	minPassword = 16
 )
@@ -38,8 +41,10 @@ var bodyTimeout = 30 * time.Second
 
 // daemon is what the qubes' handlers share.
 type daemon struct {
-	home  string
-	token string // GitHub read token
+	home   string
+	token  string // GitHub read token
+	github string // https://github.com; tests use a local server
+	client *http.Client
 
 	outMu sync.Mutex
 	out   io.Writer // the user's terminal
@@ -51,7 +56,7 @@ type qube struct {
 	name     string
 	conf     config.Qube
 	password [sha256.Size]byte // SHA-256 of the qube's password
-	gh       *limiter
+	gh, git  *limiter
 }
 
 // Main is split-gh serve. It answers until Ctrl-C.
@@ -122,7 +127,7 @@ func load(home string, out io.Writer) ([]*qube, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read_token_file: %w", err)
 	}
-	d := &daemon{home: home, token: token, out: out}
+	d := &daemon{home: home, token: token, github: "https://github.com", client: githubClient(), out: out}
 	names := make([]string, 0, len(cfg.Qubes))
 	for name := range cfg.Qubes {
 		names = append(names, name)
@@ -147,7 +152,7 @@ func load(home string, out io.Writer) ([]*qube, error) {
 			return nil, fmt.Errorf("qube %s: the password must have at least %d characters", name, minPassword)
 		}
 		qubes = append(qubes, &qube{daemon: d, name: name, conf: c, password: sha256.Sum256([]byte(password)),
-			gh: newLimiter(ghPerMinute, ghSlots)})
+			gh: newLimiter(ghPerMinute, ghSlots), git: newLimiter(gitPerMinute, gitSlots)})
 	}
 	if len(qubes) == 0 {
 		return nil, errors.New("config.json has no qubes")
@@ -167,8 +172,8 @@ func readSecret(path string) (string, error) {
 	return s, nil
 }
 
-// ServeHTTP checks the limits and the password, then answers a gh read,
-// POST /gh.
+// ServeHTTP checks the limits and the password, then answers a gh read
+// (POST /gh) or a git fetch (any other path).
 func (q *qube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A body must arrive in time, also one that no handler reads: the
 	// server reads what's left of it before answering. readBody lifts the
@@ -176,23 +181,29 @@ func (q *qube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 {
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(bodyTimeout))
 	}
+	isGH := r.URL.Path == "/gh"
+	l := q.git
+	if isGH {
+		l = q.gh
+	}
 	// Requests over the limits aren't logged, so they can't fill the log.
-	release, refusal := q.gh.take(time.Now())
+	release, refusal := l.take(time.Now())
 	if refusal != "" {
 		http.Error(w, refusal, http.StatusTooManyRequests)
 		return
 	}
 	defer release()
+	// Never 401: git would ask for a password.
 	if !q.authorized(r) {
 		q.printf("refused a request with a wrong password")
 		http.Error(w, "split-gh: wrong password; the agent qube has it in ~/.config/split-gh/password", http.StatusForbidden)
 		return
 	}
-	if r.URL.Path != "/gh" {
-		http.Error(w, "split-gh: not found", http.StatusNotFound)
-		return
+	if isGH {
+		q.serveGH(w, r)
+	} else {
+		q.serveGit(w, r)
 	}
-	q.serveGH(w, r)
 }
 
 // readBody reads a request body of at most limit bytes, and then lifts the

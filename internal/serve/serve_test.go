@@ -54,6 +54,13 @@ func newTestDaemon(t *testing.T, qubesJSON string) *testDaemon {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Tests never reach GitHub; git tests set their own.
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request to GitHub: %s %s", r.Method, r.URL)
+		http.Error(w, "test", http.StatusTeapot)
+	}))
+	t.Cleanup(github.Close)
+	qubes[0].github, qubes[0].client = github.URL, github.Client()
 	var servers []*httptest.Server
 	for _, q := range qubes {
 		s := httptest.NewServer(q)

@@ -21,7 +21,8 @@ type Qube struct {
 	Port int `json:"port"`
 	// PasswordFile holds the password the qube sends with every request.
 	PasswordFile string `json:"password_file"`
-	// ReadRepos are the GitHub OWNER/REPO patterns the qube may read with gh.
+	// ReadRepos are the GitHub OWNER/REPO patterns the qube may read, with
+	// gh and with git fetch.
 	ReadRepos []string `json:"read_repos"`
 }
 

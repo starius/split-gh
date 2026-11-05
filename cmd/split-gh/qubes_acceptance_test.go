@@ -21,7 +21,7 @@ import (
 // TestQubesPrivateRead is opt-in: it runs in the agent qube and talks to
 // split-gh serve in gh-auth, and through it to GitHub. Nothing it sends can
 // write: the refused POST targets a route that has no POST operation and
-// has no body.
+// has no body, and the refused push is a dry run.
 func TestQubesPrivateRead(t *testing.T) {
 	repoInput := os.Getenv("SPLIT_GH_E2E_REPO")
 	number := os.Getenv("SPLIT_GH_E2E_PR")
@@ -142,6 +142,28 @@ func TestQubesPrivateRead(t *testing.T) {
 			}
 		})
 	}
+	// git, with the agent qube's insteadOf and password in its config.
+	git := func(args ...string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = checkout
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	t.Run("git ls-remote", func(t *testing.T) {
+		out, err := git("ls-remote", "https://github.com/"+repo, "HEAD")
+		if err != nil || len(out) < 41 || strings.Contains(out, "remote:") {
+			t.Fatalf("git ls-remote: %v\n%s", err, out)
+		}
+	})
+	t.Run("git push refused", func(t *testing.T) {
+		out, err := git("push", "--dry-run", "https://github.com/"+repo, "HEAD:refs/heads/split-gh-acceptance-never")
+		if err == nil || !strings.Contains(out, "can't push to GitHub") {
+			t.Fatalf("push not refused: %v\n%s", err, out)
+		}
+	})
 }
 
 // TestQubesAllReadCommands exercises every allowed read command against real
