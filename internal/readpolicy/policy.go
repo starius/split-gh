@@ -343,8 +343,10 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 		return append([]string{"api", endpoint, "--method=GET"}, opts...), nil
 	}
 	if key == "repo view" {
-		if len(pos) != 0 {
-			return nil, errors.New("repo view does not accept a repository argument; use --repo")
+		// gh resolves a bare name to the token owner's repository, so accept
+		// only OWNER/REPO naming the checked repository, and pass gh that.
+		if len(pos) > 1 || len(pos) == 1 && !sameRepo(pos[0], repo) {
+			return nil, errors.New("repo view takes only the OWNER/REPO it runs on")
 		}
 		return append([]string{"repo", "view", repo}, opts...), nil
 	}
@@ -409,4 +411,9 @@ func allowedReadRoute(parts []string) bool {
 		return len(parts) >= 2 && (parts[1] == "runs" || parts[1] == "jobs" || parts[1] == "workflows")
 	}
 	return false
+}
+
+func sameRepo(arg, repo string) bool {
+	canonical, ok := CanonicalRepo(arg)
+	return ok && strings.EqualFold(canonical, repo)
 }

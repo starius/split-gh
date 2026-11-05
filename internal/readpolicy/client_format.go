@@ -115,10 +115,12 @@ func ClientRepoFlag(argv []string) (string, bool) {
 		}
 	}
 	var repo string
+	var positional []string
 	found := false
 	for i := 2; i < len(args); i++ {
 		a := args[i]
 		if !strings.HasPrefix(a, "-") || a == "-" {
+			positional = append(positional, a)
 			continue
 		}
 		if a == "--" {
@@ -148,6 +150,12 @@ func ClientRepoFlag(argv []string) (string, bool) {
 		if name == "repo" {
 			repo = value
 			found = true
+		}
+	}
+	// gh repo view takes the repository as its argument, not as --repo.
+	if !found && key == "repo view" && len(positional) == 1 {
+		if canonical, ok := CanonicalRepo(positional[0]); ok {
+			return canonical, true
 		}
 	}
 	return repo, found

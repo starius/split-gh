@@ -413,10 +413,25 @@ func TestPhaseOneReadCommands(t *testing.T) {
 }
 
 func TestRepoViewUsesOnlyCheckedRepository(t *testing.T) {
-	for _, args := range [][]string{{"repo", "view", "secret"}, {"repo", "view", "other/repo"}, {"repo", "view", "github.com/o/r"}} {
+	// A bare name would make gh look in the token owner's account.
+	for _, args := range [][]string{{"repo", "view", "secret"}, {"repo", "view", "other/repo"}, {"repo", "view", "o/r", "o/r"}} {
 		if _, err := Parse(args, "o/r", "main", []string{"o/*"}); err == nil {
 			t.Errorf("accepted positional %v", args)
 		}
+	}
+	// OWNER/REPO naming the checked repository is how agents call it; gh gets
+	// the checked value, not the argument.
+	for _, arg := range []string{"o/r", "O/R", "github.com/o/r"} {
+		got, err := Parse([]string{"repo", "view", arg}, "o/r", "main", []string{"o/*"})
+		if err != nil || !reflect.DeepEqual(got, []string{"repo", "view", "o/r"}) {
+			t.Errorf("repo view %s: %v %v", arg, got, err)
+		}
+	}
+	if repo, ok := ClientRepoFlag([]string{"repo", "view", "o/r", "--json=name"}); !ok || repo != "o/r" {
+		t.Errorf("shim did not take the repository from repo view's argument: %q %v", repo, ok)
+	}
+	if _, ok := ClientRepoFlag([]string{"repo", "view", "secret"}); ok {
+		t.Error("shim took a bare name as the repository")
 	}
 	got, err := Parse([]string{"repo", "view", "--repo=o/r", "--json=isPrivate"}, "o/r", "main", []string{"o/*"})
 	if err != nil {
