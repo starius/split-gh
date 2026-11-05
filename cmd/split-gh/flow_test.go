@@ -337,7 +337,7 @@ func TestApplyRunsNoHooks(t *testing.T) {
 	ran := filepath.Join(q.auth, "ran")
 	q.authGit("config", "core.hooksPath", ".githooks")
 	q.authGit("config", "core.fsmonitor", ".githooks/fsmonitor")
-	for _, name := range []string{"post-checkout", "reference-transaction", "fsmonitor"} {
+	for _, name := range []string{"post-checkout", "reference-transaction", "fsmonitor", "pre-push"} {
 		hook := filepath.Join(q.agent, ".githooks", name)
 		write(t, hook, "#!/bin/sh\necho "+name+" >> "+ran+"\n")
 		if err := os.Chmod(hook, 0755); err != nil {
@@ -347,12 +347,27 @@ func TestApplyRunsNoHooks(t *testing.T) {
 	q.git(q.ai, q.agent, "add", ".githooks")
 	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Add hooks")
 	q.apply(q.send())
-	// Now the worktree in gh-auth has the hooks, for the next apply.
+	// Now the worktree in gh-auth has the hooks, for the next apply and for
+	// the push it prints.
 	q.commit("a.txt", "one\n", "Add a")
-	q.apply(q.send())
-	if b, err := os.ReadFile(ran); err == nil {
-		t.Fatalf("apply ran the agent's programs:\n%s", b)
+	line := pushLine(t, q.apply(q.send()))
+	if out, err := q.run(q.auth, q.auth, "sh", "-c", line); err != nil {
+		t.Fatalf("%s: %v\n%s", line, err, out)
 	}
+	if b, err := os.ReadFile(ran); err == nil {
+		t.Fatalf("apply or its push ran the agent's programs:\n%s", b)
+	}
+}
+
+// pushLine is the push command in apply's output.
+func pushLine(t *testing.T, out string) string {
+	t.Helper()
+	_, line, ok := strings.Cut(out, "Push it yourself:\n  ")
+	line, _, _ = strings.Cut(line, "\n")
+	if !ok || line == "" {
+		t.Fatalf("no push command:\n%s", out)
+	}
+	return line
 }
 
 // The push command names the branch fully: in git push, "+master" means
@@ -369,9 +384,8 @@ func TestPushCommandPushesOnlyTheBranch(t *testing.T) {
 	master := remote("refs/heads/master")
 	push := func(out string) {
 		t.Helper()
-		_, line, ok := strings.Cut(out, "Push it yourself:\n  ")
-		line, _, _ = strings.Cut(line, "\n")
-		if !ok || !strings.Contains(line, "refs/heads/+master:refs/heads/+master") {
+		line := pushLine(t, out)
+		if !strings.Contains(line, "refs/heads/+master:refs/heads/+master") {
 			t.Fatalf("push command:\n%s", out)
 		}
 		if out, err := q.run(q.auth, q.auth, "sh", "-c", line); err != nil {

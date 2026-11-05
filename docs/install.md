@@ -184,6 +184,13 @@ Run them in gh-auth:
   relative `core.hooksPath`, or a filter configured as a relative path, git
   would run them from the worktree, which holds the agent's files.
 
+The worktree holds the agent's files. Read them there, but don't run
+anything that uses them, such as a build, tests or `go generate`; do that
+in `ai`. Git counts too: if your config gives `core.hooksPath` or a filter
+as a relative path, git commands in the worktree run the agent's files.
+That is why apply's own git commands run no hooks or filters, and why the
+push command it prints runs from the main checkout.
+
 What send sends: the commits on the current branch that no remote has, so
 `git rev-list HEAD --not --remotes`; or the ones after `--base COMMIT`. Their
 parent must exist in gh-auth's repository. If apply says it doesn't, run
