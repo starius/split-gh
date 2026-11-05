@@ -47,13 +47,15 @@ var (
 	commitRE    = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 )
 
-// CleanPath reports whether p is a relative path of plain components.
+// CleanPath reports whether p is a relative path of plain components. No
+// component may be .git: a worktree inside a nested repository's .git
+// directory could fill its hooks directory with the agent's files.
 func CleanPath(p string) bool {
 	if p == "" || len(p) > 200 {
 		return false
 	}
 	for _, c := range strings.Split(p, "/") {
-		if c == "." || c == ".." || !componentRE.MatchString(c) {
+		if c == "." || c == ".." || strings.EqualFold(c, ".git") || !componentRE.MatchString(c) {
 			return false
 		}
 	}
@@ -65,7 +67,7 @@ func (h Header) Check() error {
 	switch {
 	case !CleanPath(h.Repo):
 		return fmt.Errorf("invalid repository path %q", h.Repo)
-	case !CleanPath(h.Worktree) || strings.EqualFold(strings.Split(h.Worktree, "/")[0], ".git"):
+	case !CleanPath(h.Worktree):
 		return fmt.Errorf("invalid worktree path %q", h.Worktree)
 	case !CleanPath(h.Branch) || strings.HasPrefix(h.Branch, "-"):
 		return fmt.Errorf("invalid branch name %q", h.Branch)
