@@ -396,6 +396,9 @@ func signed(commit string) bool {
 
 // pushCommand is the push the user runs: a plain push when the remote branch
 // is behind tip, else one that only overwrites what the user has fetched.
+// It names the branch by its full ref on both sides. Short, git push would
+// read "+main" as a forced push of main, and could take "heads/main" for
+// refs/heads/main.
 func (p *plan) pushCommand(tip string) string {
 	remote := "origin"
 	for _, key := range []string{"branch." + p.h.Branch + ".pushRemote", "remote.pushDefault", "branch." + p.h.Branch + ".remote"} {
@@ -404,11 +407,11 @@ func (p *plan) pushCommand(tip string) string {
 			break
 		}
 	}
-	b := p.h.Branch
-	if r := patch.Ref(p.repo, "refs/remotes/"+remote+"/"+b); r != "" {
+	ref := "refs/heads/" + p.h.Branch
+	if r := patch.Ref(p.repo, "refs/remotes/"+remote+"/"+p.h.Branch); r != "" {
 		if _, err := patch.Git(p.repo, nil, "merge-base", "--is-ancestor", r, tip); err != nil {
-			return fmt.Sprintf("git push --force-with-lease=%s:%s %s %s", b, r, remote, b)
+			return fmt.Sprintf("git push --force-with-lease=%s:%s %s %s:%s", ref, r, remote, ref, ref)
 		}
 	}
-	return fmt.Sprintf("git push %s %s", remote, b)
+	return fmt.Sprintf("git push %s %s:%s", remote, ref, ref)
 }

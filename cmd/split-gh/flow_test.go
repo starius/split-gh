@@ -156,7 +156,7 @@ func TestSendApplyFlow(t *testing.T) {
 	// First send creates the worktree and branch, with signed commits.
 	q.commit("a.txt", "one\n", "Add a")
 	out := q.apply(q.send())
-	if !strings.Contains(out, "git push origin fix-foo") {
+	if !strings.Contains(out, "git push origin refs/heads/fix-foo:refs/heads/fix-foo\n") {
 		t.Fatalf("no push command:\n%s", out)
 	}
 	tip1 := q.authGit("rev-parse", "fix-foo")
@@ -353,4 +353,41 @@ func TestApplyRunsNoHooks(t *testing.T) {
 	if b, err := os.ReadFile(ran); err == nil {
 		t.Fatalf("apply ran the agent's programs:\n%s", b)
 	}
+}
+
+// The push command names the branch fully: in git push, "+master" means
+// force-push master, and "heads/master" would be master too.
+func TestPushCommandPushesOnlyTheBranch(t *testing.T) {
+	q := newQubes(t)
+	github := q.authGit("remote", "get-url", "origin")
+	remote := func(ref string) string {
+		return q.git(q.auth, "", "--git-dir="+github, "rev-parse", "--verify", "--quiet", ref)
+	}
+	q.git(q.ai, q.agent, "branch", "-m", "+master")
+	// The user's master in gh-auth differs from GitHub's.
+	q.authGit("commit", "--quiet", "--amend", "-m", "Not for GitHub")
+	master := remote("refs/heads/master")
+	push := func(out string) {
+		t.Helper()
+		_, line, ok := strings.Cut(out, "Push it yourself:\n  ")
+		line, _, _ = strings.Cut(line, "\n")
+		if !ok || !strings.Contains(line, "refs/heads/+master:refs/heads/+master") {
+			t.Fatalf("push command:\n%s", out)
+		}
+		if out, err := q.run(q.auth, q.auth, "sh", "-c", line); err != nil {
+			t.Fatalf("%s: %v\n%s", line, err, out)
+		}
+		if remote("refs/heads/master") != master || remote("refs/heads/+master") != q.authGit("rev-parse", "refs/heads/+master") {
+			t.Fatalf("%s pushed the wrong thing", line)
+		}
+	}
+	q.commit("a.txt", "one\n", "Add a")
+	push(q.apply(q.send()))
+	// A rewrite: the command is a --force-with-lease push.
+	q.git(q.ai, q.agent, "commit", "--quiet", "--amend", "-m", "Add a, reworded")
+	out := q.apply(q.send())
+	if !strings.Contains(out, "--force-with-lease=refs/heads/+master:") {
+		t.Fatalf("no lease:\n%s", out)
+	}
+	push(out)
 }
