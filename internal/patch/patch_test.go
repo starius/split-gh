@@ -188,3 +188,14 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 		}
 	}
 }
+
+// /etc/gitattributes can differ between the qubes: a line such as *.txt -diff
+// in one makes its patches binary. A test can't write that file, but git var
+// says whether git would read it.
+func TestFormatIgnoresSystemAttributes(t *testing.T) {
+	cmd := exec.Command("git", "var", "GIT_ATTR_SYSTEM")
+	cmd.Env = formatEnv("")
+	if out, err := cmd.Output(); err == nil {
+		t.Fatalf("Format reads %s", out)
+	}
+}

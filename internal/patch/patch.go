@@ -138,7 +138,7 @@ var formatArgs = []string{"format-patch", "--stdout", "--zero-commit", "--no-sig
 	"--src-prefix=a/", "--dst-prefix=b/", "--no-relative", "--inter-hunk-context=0", "-O/dev/null"}
 
 // formatConfig pins the settings that change format-patch output and have
-// no option. With core.attributesFile and GIT_ATTR_SOURCE (in Format),
+// no option. With core.attributesFile, and the environment of formatEnv,
 // attributes don't count either, such as -diff or a diff driver's function
 // names: only $GIT_DIR/info/attributes still does.
 var formatConfig = []string{"-c", "diff.suppressBlankEmpty=false", "-c", "core.quotePath=true",
@@ -152,15 +152,11 @@ var AmArgs = []string{"am", "--quiet", "--keep", "--keep-cr", "--no-3way",
 // Format returns each commit's patch text, in the order given. The text is
 // empty for a commit with no changes and for a merge.
 func Format(dir string, commits []string) ([]string, error) {
-	// Ignore global and system configuration; the pinned options and
-	// settings cover the repository's. GIT_ATTR_SOURCE, from git 2.40,
-	// reads attributes from the empty tree instead of the checkout.
 	empty, err := Git(dir, nil, "hash-object", "-t", "tree", "/dev/null")
 	if err != nil {
 		return nil, err
 	}
-	env := append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
-		"GIT_ATTR_SOURCE="+strings.TrimSpace(empty))
+	env := formatEnv(strings.TrimSpace(empty))
 	texts := make([]string, len(commits))
 	for i, c := range commits {
 		out, err := Git(dir, env, append(append(append([]string{}, formatConfig...), formatArgs...), "-1", c)...)
@@ -170,6 +166,15 @@ func Format(dir string, commits []string) ([]string, error) {
 		texts[i] = out
 	}
 	return texts, nil
+}
+
+// formatEnv is Format's environment. It ignores the global and system
+// configuration, and the system attributes, /etc/gitattributes; the pinned
+// options and settings cover the repository's. GIT_ATTR_SOURCE, from git
+// 2.40, reads attributes from the empty tree instead of the checkout.
+func formatEnv(emptyTree string) []string {
+	return append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_ATTR_NOSYSTEM=1", "GIT_ATTR_SOURCE="+emptyTree)
 }
 
 // Key is the text two patches are compared by. It drops the compressed data
