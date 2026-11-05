@@ -189,7 +189,9 @@ anything that uses them, such as a build, tests or `go generate`; do that
 in `ai`. Git counts too: if your config gives `core.hooksPath` or a filter
 as a relative path, git commands in the worktree run the agent's files.
 That is why apply's own git commands run no hooks or filters, and why the
-push command it prints runs from the main checkout.
+push command it prints runs from the main checkout. The main checkout's hooks
+stay yours: apply refuses a worktree where git there looks for them, such as
+`~/lnd/.githooks` when `core.hooksPath` is `.githooks`.
 
 What send sends: the commits on the current branch that no remote has, so
 `git rev-list HEAD --not --remotes`; or the ones after `--base COMMIT`. Their

@@ -90,6 +90,9 @@ func load(file string) (*plan, error) {
 	p.tip = patch.Ref(p.repo, "refs/heads/"+p.h.Branch)
 	p.applied = patch.Ref(p.repo, appliedRef+p.h.Branch)
 	p.worktree = filepath.Join(p.repo, p.h.Worktree)
+	if err := p.checkHooks(real); err != nil {
+		return nil, err
+	}
 	if err := p.checkWorktree(real); err != nil {
 		return nil, err
 	}
@@ -159,6 +162,31 @@ func (p *plan) checkWorktree(real string) error {
 			where = s
 		} else if line == "branch refs/heads/"+p.h.Branch {
 			return fmt.Errorf("branch %s is checked out in %s, not in %s", p.h.Branch, where, p.worktree)
+		}
+	}
+	return nil
+}
+
+// checkHooks refuses a worktree where git in the main checkout looks for
+// hooks. core.hooksPath can be relative to the main checkout, such as
+// .githooks: a worktree there would make the printed push, or a commit in
+// the main checkout, run the agent's files.
+func (p *plan) checkHooks(real string) error {
+	// Not patch.Git, which sets core.hooksPath.
+	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks")
+	cmd.Dir = p.repo
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("git rev-parse --git-path hooks: %v", err)
+	}
+	hooks := strings.TrimSuffix(string(out), "\n")
+	if !filepath.IsAbs(hooks) {
+		hooks = filepath.Join(real, hooks)
+	}
+	for _, wt := range []string{p.worktree, filepath.Join(real, p.h.Worktree)} {
+		if hooks == wt || strings.HasPrefix(hooks, wt+"/") {
+			return fmt.Errorf("the worktree %s would hold %s, where git in %s looks for hooks (core.hooksPath): it would run the agent's files",
+				p.worktree, hooks, p.repo)
 		}
 	}
 	return nil

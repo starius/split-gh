@@ -359,6 +359,37 @@ func TestApplyRunsNoHooks(t *testing.T) {
 	}
 }
 
+// With a relative core.hooksPath, git in the main checkout runs hooks from
+// that directory of it: the push apply prints, and any commit or checkout
+// there. A worktree in that place would make them the agent's files.
+func TestApplyRefusesWorktreeAtHooks(t *testing.T) {
+	q := newQubes(t)
+	ran := filepath.Join(q.auth, "ran")
+	q.authGit("config", "core.hooksPath", ".githooks")
+	main := filepath.Join(q.ai, "lnd")
+	q.git(q.ai, main, "worktree", "move", "fix-foo", ".githooks")
+	q.agent = filepath.Join(main, ".githooks")
+	hook := filepath.Join(q.agent, "pre-push")
+	write(t, hook, "#!/bin/sh\necho pre-push >> "+ran+"\n")
+	if err := os.Chmod(hook, 0755); err != nil {
+		t.Fatal(err)
+	}
+	q.git(q.ai, q.agent, "add", "pre-push")
+	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Add a hook")
+	out, err := q.splitgh(q.auth, "apply", q.send())
+	if err == nil {
+		q.run(q.auth, q.auth, "sh", "-c", pushLine(t, out))
+		b, _ := os.ReadFile(ran)
+		t.Fatalf("apply put the worktree at the hooks; the push ran:\n%s", b)
+	}
+	if !strings.Contains(out, "core.hooksPath") {
+		t.Fatalf("apply: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(q.authGit("rev-parse", "--path-format=absolute", "--git-path", "hooks")); !os.IsNotExist(err) {
+		t.Fatal("apply made the hooks directory")
+	}
+}
+
 // pushLine is the push command in apply's output.
 func pushLine(t *testing.T, out string) string {
 	t.Helper()
