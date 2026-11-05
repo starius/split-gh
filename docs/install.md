@@ -192,7 +192,8 @@ parent must exist in gh-auth's repository. If apply says it doesn't, run
 - the main checkout, because gh-auth mirrors worktrees;
 - merges and empty commits;
 - paths and branch names with characters other than letters, digits and `._+-/`;
-- a commit message that `git am` would change, such as one with a `---` line.
+- a commit message that `git am` would change, such as one with a `---` line;
+- a patch over 64 MiB, which apply wouldn't take.
 
 If you commit on the branch in gh-auth, the agent sees your commits once you
 push them, and should build on them. Until then, a patch from the agent drops

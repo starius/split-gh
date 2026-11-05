@@ -113,6 +113,10 @@ func send(baseRev string) error {
 		}
 	}
 
+	data, err := patch.Encode(h, texts)
+	if err != nil {
+		return err
+	}
 	if err := roundTrip(top, h.Base, texts); err != nil {
 		return err
 	}
@@ -124,7 +128,7 @@ func send(baseRev string) error {
 	}
 	defer os.RemoveAll(dir)
 	file := filepath.Join(dir, name)
-	if err := os.WriteFile(file, patch.Encode(h, texts), 0600); err != nil {
+	if err := os.WriteFile(file, data, 0600); err != nil {
 		return err
 	}
 	move := exec.Command("qvm-move", "--without-progress", file)

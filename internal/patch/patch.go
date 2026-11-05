@@ -77,10 +77,17 @@ func (h Header) Check() error {
 	return nil
 }
 
-// Encode returns the patch file.
-func Encode(h Header, patches []string) []byte {
-	return []byte(fmt.Sprintf("%s\nrepo: %s\nworktree: %s\nbranch: %s\nbase: %s\n\n%s",
+// MaxFile is the largest patch file apply takes.
+const MaxFile = 64 << 20
+
+// Encode returns the patch file, or an error if apply wouldn't take it.
+func Encode(h Header, patches []string) ([]byte, error) {
+	data := []byte(fmt.Sprintf("%s\nrepo: %s\nworktree: %s\nbranch: %s\nbase: %s\n\n%s",
 		magic, h.Repo, h.Worktree, h.Branch, h.Base, strings.Join(patches, "")))
+	if len(data) > MaxFile {
+		return nil, fmt.Errorf("the patch is %d MiB, more than the %d MiB that apply takes", len(data)>>20, MaxFile>>20)
+	}
+	return data, nil
 }
 
 // Parse reads a patch file.

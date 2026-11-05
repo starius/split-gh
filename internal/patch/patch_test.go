@@ -17,8 +17,12 @@ func TestParse(t *testing.T) {
 	if err != nil || h.Repo != "lnd" || h.Worktree != "fix-foo" || h.Branch != "fix/foo" || len(patches) != 2 {
 		t.Fatalf("%+v %d %v", h, len(patches), err)
 	}
-	if string(Encode(h, patches)) != good {
-		t.Fatal("Encode does not invert Parse")
+	if data, err := Encode(h, patches); err != nil || string(data) != good {
+		t.Fatalf("Encode does not invert Parse: %v", err)
+	}
+	// send refuses what apply would.
+	if _, err := Encode(h, []string{Separator + strings.Repeat("x", MaxFile)}); err == nil || !strings.Contains(err.Error(), "64 MiB") {
+		t.Fatalf("oversized patch: %v", err)
 	}
 	bad := map[string]string{
 		"version":          strings.Replace(good, magic, "split-gh-patch 2", 1),

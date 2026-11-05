@@ -23,8 +23,6 @@ import (
 // were put there by someone else, so apply won't drop them without --force.
 const appliedRef = "refs/split-gh/applied/"
 
-const maxPatchBytes = 64 << 20
-
 type plan struct {
 	file     string
 	qube     string // the qube that sent the patch
@@ -62,7 +60,7 @@ func load(file string) (*plan, error) {
 	}
 	if fi, err := os.Lstat(abs); err != nil {
 		return nil, err
-	} else if !fi.Mode().IsRegular() || fi.Size() > maxPatchBytes {
+	} else if !fi.Mode().IsRegular() || fi.Size() > patch.MaxFile {
 		return nil, fmt.Errorf("%s is not a regular file under 64 MiB", file)
 	}
 	data, err := os.ReadFile(abs)
