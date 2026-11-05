@@ -528,6 +528,37 @@ func TestApplyRunsNoFiltersOfNewWorktrees(t *testing.T) {
 	}
 }
 
+// git am signs in the worktree, so a signing program given as a relative
+// path is the agent's file there.
+func TestApplyRefusesRelativeSigner(t *testing.T) {
+	q := newQubes(t)
+	ran := filepath.Join(q.auth, "ran")
+	signer := filepath.Join(q.agent, "scripts/sign")
+	write(t, signer, "#!/bin/sh\necho ran >> "+ran+"\nexec "+filepath.Join(q.bin, "fake-gpg")+" \"$@\"\n")
+	if err := os.Chmod(signer, 0755); err != nil {
+		t.Fatal(err)
+	}
+	q.git(q.ai, q.agent, "add", ".")
+	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Add a signer")
+	patchFile := q.send()
+	for _, setting := range [][2]string{
+		{"gpg.program", "./scripts/sign"}, {"gpg.openpgp.program", "scripts/sign"},
+		{"gpg.x509.program", "scripts/sign"}, {"gpg.ssh.program", "scripts/sign"},
+		{"gpg.ssh.defaultKeyCommand", "scripts/sign -L"},
+	} {
+		q.authGit("config", setting[0], setting[1])
+		out, err := q.splitgh(q.auth, "apply", patchFile)
+		if b, err := os.ReadFile(ran); err == nil {
+			t.Fatalf("%s=%s: apply ran the agent's program:\n%s", setting[0], setting[1], b)
+		}
+		if err == nil || !strings.Contains(out, setting[1]) {
+			t.Fatalf("%s=%s: %v\n%s", setting[0], setting[1], err, out)
+		}
+		q.authGit("config", "--unset", setting[0])
+	}
+	q.apply(patchFile)
+}
+
 // When apply goes back to an older commit, git would overwrite an ignored
 // file of the user's that the older commit tracks.
 func TestApplyKeepsIgnoredFiles(t *testing.T) {

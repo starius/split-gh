@@ -404,6 +404,9 @@ func (p *plan) setRefs(from, to [2]string) error {
 // and checks that the branch now formats to exactly the patch file.
 func (p *plan) commit() (string, error) {
 	if rest := p.patches[p.keep:]; len(rest) > 0 {
+		if err := checkSigner(p.worktree); err != nil {
+			return "", err
+		}
 		f, err := os.CreateTemp("", "split-gh-*.mbox")
 		if err != nil {
 			return "", err
@@ -449,6 +452,33 @@ func (p *plan) commit() (string, error) {
 		}
 	}
 	return tip, nil
+}
+
+// checkSigner refuses a signing program given as a relative path, such as
+// gpg.program=./sign: git am runs it in the worktree, from the agent's files.
+// A name without a slash is looked up in PATH, and an absolute path is fine.
+func checkSigner(worktree string) error {
+	cmd := exec.Command("git", "config", "--null", "--get-regexp", `^gpg\.((openpgp|x509|ssh)\.)?program$|^gpg\.ssh\.defaultkeycommand$`)
+	cmd.Dir = worktree
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(out) == 0 {
+		return nil // none configured
+	}
+	if err != nil {
+		return fmt.Errorf("git config: %v", err)
+	}
+	for _, entry := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		key, value, _ := strings.Cut(entry, "\n")
+		program := value
+		if f := strings.Fields(value); key == "gpg.ssh.defaultkeycommand" && len(f) > 0 {
+			program = f[0] // a command line
+		}
+		if strings.Contains(program, "/") && !filepath.IsAbs(program) {
+			return fmt.Errorf("%s is %s: git am would run that from the worktree, which holds the agent's files. Use an absolute path", key, value)
+		}
+	}
+	return nil
 }
 
 func signed(commit string) bool {
