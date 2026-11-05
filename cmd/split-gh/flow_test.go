@@ -496,6 +496,38 @@ func TestApplyRunsNoFilters(t *testing.T) {
 	}
 }
 
+// The configuration can differ in a worktree, as here with an includeIf. git
+// worktree add checks out in a git of its own, which reads the new
+// worktree's: apply must turn off the filters configured there too.
+func TestApplyRunsNoFiltersOfNewWorktrees(t *testing.T) {
+	q := newQubes(t)
+	ran := filepath.Join(q.auth, "ran")
+	include := filepath.Join(q.auth, "worktrees.gitconfig")
+	write(t, include, "[filter \"demo\"]\n\tsmudge = ./scripts/filter\n\tclean = ./scripts/filter\n\trequired = true\n")
+	q.authGit("config", "includeIf.gitdir:"+filepath.Join(q.auth, "lnd/.git/worktrees")+"/.path", include)
+	script := filepath.Join(q.agent, "scripts/filter")
+	write(t, script, "#!/bin/sh\necho ran >> "+ran+"\ncat\n")
+	if err := os.Chmod(script, 0755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(q.agent, ".gitattributes"), "*.dat filter=demo\n")
+	write(t, filepath.Join(q.agent, "x.dat"), "data\n")
+	q.git(q.ai, q.agent, "add", ".")
+	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Add a filter")
+	q.apply(q.send())
+	// The user removes the worktree. The next patch keeps the first commit,
+	// so apply makes the worktree again at a commit with the agent's script.
+	q.authGit("worktree", "remove", "--force", "fix-foo")
+	q.commit("y.txt", "y\n", "Add y")
+	q.apply(q.send())
+	if b, err := os.ReadFile(ran); err == nil {
+		t.Fatalf("apply ran the agent's filter:\n%s", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(q.auth, "lnd/fix-foo/x.dat")); string(b) != "data\n" {
+		t.Fatalf("x.dat is %q", b)
+	}
+}
+
 // When apply goes back to an older commit, git would overwrite an ignored
 // file of the user's that the older commit tracks.
 func TestApplyKeepsIgnoredFiles(t *testing.T) {

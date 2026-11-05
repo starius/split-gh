@@ -328,8 +328,18 @@ func (p *plan) apply(force bool) error {
 		if _, err := patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--detach", start); err != nil {
 			return err
 		}
-	} else if _, err := patch.Git(p.repo, nil, "worktree", "add", "--quiet", "--detach", p.worktree, start); err != nil {
-		return err
+	} else {
+		// git worktree add would check out in a git of its own, which reads
+		// the new worktree's configuration: that can name filters that the
+		// main checkout's doesn't, so patch.Command wouldn't turn them off.
+		// The checkout runs in the new worktree instead.
+		if _, err := patch.Git(p.repo, nil, "worktree", "add", "--quiet", "--no-checkout", "--detach", p.worktree, start); err != nil {
+			return err
+		}
+		if _, err := patch.Git(p.worktree, nil, "reset", "--quiet", "--hard", "--no-recurse-submodules"); err != nil {
+			patch.Git(p.repo, nil, "worktree", "remove", "--force", p.worktree)
+			return err
+		}
 	}
 	tip, err := p.commit()
 	if err == nil {

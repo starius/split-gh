@@ -276,7 +276,10 @@ func IDs(commits []Commit) []string {
 //   - no filters: .gitattributes picks a file's filter driver, and a driver
 //     configured as a relative path runs from the worktree.
 //
-// The user's own hooks and filters don't run either.
+// The user's own hooks and filters don't run either. The filter drivers are
+// those in dir's configuration. A git that this git starts in another
+// worktree reads that worktree's, which can have others: run such a step in
+// that worktree instead.
 func Command(dir string, args ...string) (*exec.Cmd, error) {
 	safe := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
 	drivers, err := filterDrivers(dir)
