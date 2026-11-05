@@ -391,3 +391,34 @@ func TestPushCommandPushesOnlyTheBranch(t *testing.T) {
 	}
 	push(out)
 }
+
+// apply moves the branch and its marker together, or neither. Here the
+// marker can't be written: one for a deleted branch fix-foo is in its way.
+func TestApplyMovesBranchAndMarkerTogether(t *testing.T) {
+	q := newQubes(t)
+	q.commit("a.txt", "one\n", "Add a")
+	q.apply(q.send())
+	q.authGit("worktree", "remove", "fix-foo")
+	q.authGit("branch", "-D", "fix-foo")
+	main := filepath.Join(q.ai, "lnd")
+	q.git(q.ai, main, "worktree", "remove", "--force", "fix-foo")
+	q.git(q.ai, main, "branch", "-D", "fix-foo")
+	q.git(q.ai, main, "worktree", "add", "--quiet", "-b", "fix-foo/bar", "bar", "origin/master")
+	q.agent = filepath.Join(main, "bar")
+	q.commit("b.txt", "two\n", "Add b")
+	patchFile := q.send()
+	if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, "refs/split-gh/applied/fix-foo") {
+		t.Fatalf("apply: %v\n%s", err, out)
+	}
+	if q.authGit("branch", "--list", "fix-foo/bar") != "" {
+		t.Fatal("failed apply created the branch")
+	}
+	if _, err := os.Stat(filepath.Join(q.auth, "lnd/bar")); !os.IsNotExist(err) {
+		t.Fatal("failed apply left the worktree")
+	}
+	q.authGit("update-ref", "-d", "refs/split-gh/applied/fix-foo")
+	q.apply(patchFile)
+	if q.authGit("rev-parse", "refs/split-gh/applied/fix-foo/bar") != q.authGit("rev-parse", "refs/heads/fix-foo/bar") {
+		t.Fatal("marker not set")
+	}
+}

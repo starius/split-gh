@@ -306,11 +306,15 @@ func (p *plan) apply(force bool) error {
 	}
 	tip, err := p.commit()
 	if err == nil {
-		old := p.tip
-		if old == "" {
-			old = strings.Repeat("0", len(tip))
+		err = p.setRefs([2]string{p.tip, p.applied}, [2]string{tip, tip})
+	}
+	if err == nil {
+		// HEAD is at tip already, so this only attaches it to the branch.
+		if _, err = patch.Git(p.worktree, nil, "switch", "--quiet", p.h.Branch); err != nil {
+			if undo := p.setRefs([2]string{tip, tip}, [2]string{p.tip, p.applied}); undo != nil {
+				err = fmt.Errorf("%v\nMoving %s back failed too: %v", err, p.h.Branch, undo)
+			}
 		}
-		_, err = patch.Git(p.repo, nil, "update-ref", "-m", "split-gh apply", "refs/heads/"+p.h.Branch, tip, old)
 	}
 	if err != nil {
 		// Put the worktree back. The branch hasn't moved.
@@ -321,17 +325,35 @@ func (p *plan) apply(force bool) error {
 		}
 		return err
 	}
-	if _, err := patch.Git(p.worktree, nil, "switch", "--quiet", p.h.Branch); err != nil {
-		return err
-	}
-	if _, err := patch.Git(p.repo, nil, "update-ref", appliedRef+p.h.Branch, tip); err != nil {
-		return err
-	}
 	fmt.Printf("%s is now at %s: %d commits on %s, %d kept and %d signed and added.\n",
 		p.h.Branch, tip[:12], len(p.patches), p.h.Base[:12], p.keep, len(p.patches)-p.keep)
 	fmt.Printf("Push it yourself:\n  cd %s && %s\n", p.worktree, p.pushCommand(tip))
 	if err := os.Remove(p.file); err == nil {
 		fmt.Printf("Removed %s.\n", p.file)
+	}
+	return nil
+}
+
+// setRefs moves the branch and its applied marker from the values in from to
+// the values in to, in one transaction: both move or neither does, and only
+// if neither changed since apply read them. "" is a ref that doesn't exist.
+func (p *plan) setRefs(from, to [2]string) error {
+	var script strings.Builder
+	for i, ref := range []string{"refs/heads/" + p.h.Branch, appliedRef + p.h.Branch} {
+		old := from[i]
+		if old == "" {
+			old = strings.Repeat("0", len(p.h.Base))
+		}
+		if to[i] == "" {
+			fmt.Fprintf(&script, "delete %s %s\n", ref, old)
+		} else {
+			fmt.Fprintf(&script, "update %s %s %s\n", ref, to[i], old)
+		}
+	}
+	cmd := patch.Command(p.repo, "update-ref", "-m", "split-gh apply", "--stdin")
+	cmd.Stdin = strings.NewReader(script.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git update-ref: %s", patch.Visible(strings.TrimSpace(string(out))))
 	}
 	return nil
 }
