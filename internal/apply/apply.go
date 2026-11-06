@@ -429,7 +429,7 @@ func (p *plan) apply(force bool) error {
 			return err
 		}
 	}
-	tip, err := p.commit()
+	tip, err := p.commit(start)
 	if err == nil {
 		err = p.setRefs([2]string{p.tip, p.applied}, [2]string{tip, tip})
 	}
@@ -488,13 +488,11 @@ func (p *plan) setRefs(from, to [2]string) error {
 	return nil
 }
 
-// commit applies the patches after the kept commits, signing each new commit,
-// and checks that the branch now formats to exactly the patch file.
-func (p *plan) commit() (string, error) {
+// commit applies the patches after the kept commits on start, the worktree's
+// HEAD, signs each new commit, and checks that the branch now formats to
+// exactly the patch file.
+func (p *plan) commit(start string) (string, error) {
 	if rest := p.patches[p.keep:]; len(rest) > 0 {
-		if err := checkSigner(p.worktree); err != nil {
-			return "", err
-		}
 		f, err := os.CreateTemp("", "split-gh-*.mbox")
 		if err != nil {
 			return "", err
@@ -507,14 +505,17 @@ func (p *plan) commit() (string, error) {
 		if err != nil {
 			return "", err
 		}
-		cmd, err := patch.Command(p.worktree, append(append([]string{}, patch.AmArgs...), "--gpg-sign", f.Name())...)
+		// Not --gpg-sign: git am would sign in the worktree.
+		cmd, err := patch.Command(p.worktree, append(append([]string{}, patch.AmArgs...), "--no-gpg-sign", f.Name())...)
 		if err != nil {
 			return "", err
 		}
-		cmd.Stdin = os.Stdin
 		if out, err := cmd.CombinedOutput(); err != nil {
 			patch.Git(p.worktree, nil, "am", "--abort")
 			return "", fmt.Errorf("git am failed:\n%s", patch.Visible(string(out)))
+		}
+		if err := p.sign(start); err != nil {
+			return "", err
 		}
 	}
 	tip := patch.Ref(p.worktree, "HEAD")
@@ -542,12 +543,81 @@ func (p *plan) commit() (string, error) {
 	return tip, nil
 }
 
-// checkSigner refuses a signing program given as a relative path, such as
-// gpg.program=./sign: git am runs it in the worktree, from the agent's files.
-// A name without a slash is looked up in PATH, and an absolute path is fine.
-func checkSigner(worktree string) error {
-	cmd := exec.Command("git", "config", "--null", "--get-regexp", `^gpg\.((openpgp|x509|ssh)\.)?program$|^gpg\.ssh\.defaultkeycommand$`)
-	cmd.Dir = worktree
+// sign replaces the commits after start, up to the worktree's HEAD, with
+// signed copies: git commit-tree -S copies each one's tree, author and
+// message. It runs in an empty directory, with the worktree's git directory.
+// Signing runs commands from your configuration, and in the worktree a
+// relative path in one would be the agent's file: gpg.program=./sign, the
+// script in gpg.ssh.defaultKeyCommand="sh ./key", a key file in
+// user.signingKey. In the empty directory they find nothing.
+func (p *plan) sign(start string) error {
+	gitDir, err := revParse(p.worktree, "--absolute-git-dir")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp("", "split-gh-sign-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	empty, message := filepath.Join(tmp, "empty"), filepath.Join(tmp, "message")
+	if err := os.Mkdir(empty, 0700); err != nil {
+		return err
+	}
+	env := append(os.Environ(), "GIT_DIR="+gitDir)
+	if err := p.checkSigners(empty, env); err != nil {
+		return err
+	}
+	head := patch.Ref(p.worktree, "HEAD")
+	commits, err := patch.Range(p.worktree, start, head)
+	if err != nil {
+		return err
+	}
+	parent := start
+	for _, c := range commits {
+		obj, err := patch.Git(p.worktree, nil, "cat-file", "commit", c.ID)
+		if err != nil {
+			return err
+		}
+		header, msg, _ := strings.Cut(obj, "\n\n")
+		var author string
+		for _, line := range strings.Split(header, "\n") {
+			if a, ok := strings.CutPrefix(line, "author "); ok {
+				author = a // Name <email> 1700000000 +0100
+			}
+		}
+		i, j := strings.Index(author, "<"), strings.LastIndex(author, "> ")
+		if i < 0 || j < i {
+			return fmt.Errorf("commit %s has no author", c.ID[:12])
+		}
+		if err := os.WriteFile(message, []byte(msg), 0600); err != nil {
+			return err
+		}
+		cmd, err := patch.Command(empty, "commit-tree", "-S", "-p", parent, "-F", message, c.ID+"^{tree}")
+		if err != nil {
+			return err
+		}
+		cmd.Env = append(append([]string{}, env...), "GIT_AUTHOR_NAME="+strings.TrimSuffix(author[:i], " "),
+			"GIT_AUTHOR_EMAIL="+author[i+1:j], "GIT_AUTHOR_DATE=@"+author[j+2:])
+		var stderr bytes.Buffer
+		cmd.Stdin, cmd.Stderr = os.Stdin, &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			return fmt.Errorf("signing failed; apply signs in an empty directory, where a relative path in your signing setup finds nothing:\n%s",
+				patch.Visible(stderr.String()))
+		}
+		parent = strings.TrimSpace(string(out))
+	}
+	_, err = patch.Git(p.worktree, nil, "update-ref", "--no-deref", "-m", "split-gh apply: sign", "HEAD", parent, head)
+	return err
+}
+
+// checkSigners refuses a signing program in a worktree, named by an absolute
+// path: it would be the agent's file. A program is gpg.program or
+// gpg.<format>.program, or the command of gpg.ssh.defaultKeyCommand.
+func (p *plan) checkSigners(dir string, env []string) error {
+	cmd := exec.Command("git", "config", "--null", "--type=path", "--get-regexp", `^gpg\.((openpgp|x509|ssh)\.)?program$|^gpg\.ssh\.defaultkeycommand$`)
+	cmd.Dir, cmd.Env = dir, env
 	out, err := cmd.Output()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(out) == 0 {
@@ -562,8 +632,13 @@ func checkSigner(worktree string) error {
 		if f := strings.Fields(value); key == "gpg.ssh.defaultkeycommand" && len(f) > 0 {
 			program = f[0] // a command line
 		}
-		if strings.Contains(program, "/") && !filepath.IsAbs(program) {
-			return fmt.Errorf("%s is %s: git am would run that from the worktree, which holds the agent's files. Use an absolute path", key, value)
+		if !filepath.IsAbs(program) {
+			continue // found in PATH, or relative to dir
+		}
+		if wt, err := p.worktreeOn(program); err != nil {
+			return err
+		} else if wt != "" {
+			return fmt.Errorf("%s is %s, in the worktree %s: signing would run the agent's file", key, value, wt)
 		}
 	}
 	return nil

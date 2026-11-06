@@ -77,11 +77,12 @@ permissions. Contents covers `git fetch` too. serve runs gh with a temporary
 home and config, the token, and prompting disabled; it doesn't use your `gh`
 aliases or extensions.
 
-`split-gh apply` signs with `git am --gpg-sign`, so it uses the signing setup
-in your git config, the same one that signs your own commits. git am runs in
-the worktree, among the agent's files, so apply refuses a signing program
-given as a relative path, such as `gpg.program=./sign`. A program name, such
-as `gpg2`, or an absolute path is fine.
+`split-gh apply` signs with `git commit-tree -S`, so it uses the signing
+setup in your git config, the same one that signs your own commits. It signs
+in an empty directory, not in the worktree among the agent's files: a
+relative path in your signing setup, such as `gpg.program=./sign`, finds
+nothing there. Use a program name, such as `gpg2`, or an absolute path. apply
+refuses a signing program in a worktree.
 
 ## dom0
 

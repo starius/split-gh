@@ -33,6 +33,8 @@ func binDir(t *testing.T) string {
 		scripts := map[string]string{
 			"qvm-move": "#!/bin/sh\n[ \"$1\" = --without-progress ] && shift\nmkdir -p \"$AUTH_HOME/QubesIncoming/ai\" && cp \"$1\" \"$AUTH_HOME/QubesIncoming/ai/\" && rm \"$1\"\n",
 			"fake-gpg": "#!/bin/sh\ncat >/dev/null\necho '[GNUPG:] KEY_CONSIDERED FAKE 0' >&2\necho '[GNUPG:] SIG_CREATED D 1 8 00 1700000000 FAKE' >&2\nprintf '%s\\n' '-----BEGIN PGP SIGNATURE-----' '' 'ZmFrZQ==' '-----END PGP SIGNATURE-----'\n",
+			// git runs ssh-keygen -Y sign ... FILE and reads FILE.sig.
+			"fake-ssh-keygen": "#!/bin/sh\nfor last; do :; done\nprintf '%s\\n' '-----BEGIN SSH SIGNATURE-----' 'ZmFrZQ==' '-----END SSH SIGNATURE-----' > \"$last.sig\"\n",
 		}
 		for name, body := range scripts {
 			if buildErr = os.WriteFile(filepath.Join(buildDir, name), []byte(body), 0755); buildErr != nil {
@@ -306,7 +308,7 @@ func TestFailedApplyChangesNothing(t *testing.T) {
 	gitconfig := filepath.Join(q.auth, ".gitconfig")
 	good, _ := os.ReadFile(gitconfig)
 	write(t, gitconfig, strings.Replace(string(good), filepath.Join(q.bin, "fake-gpg"), "false", 1))
-	if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, "git am failed") {
+	if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, "signing failed") {
 		t.Fatalf("apply without a signature: %v\n%s", err, out)
 	}
 	if _, err := os.Stat(userWT); !os.IsNotExist(err) || q.authGit("branch", "--list", "fix-foo") != "" {
@@ -565,9 +567,11 @@ func TestApplyRunsNoFiltersOfNewWorktrees(t *testing.T) {
 	}
 }
 
-// git am signs in the worktree, so a signing program given as a relative
-// path is the agent's file there.
-func TestApplyRefusesRelativeSigner(t *testing.T) {
+// Signing runs commands from the user's configuration. In the worktree, a
+// relative path in one, such as gpg.program=./scripts/sign or a script that
+// gpg.ssh.defaultKeyCommand hands to sh, would be the agent's file; so would
+// an absolute path into a worktree.
+func TestApplySignsWithoutTheAgentsFiles(t *testing.T) {
 	q := newQubes(t)
 	ran := filepath.Join(q.auth, "ran")
 	signer := filepath.Join(q.agent, "scripts/sign")
@@ -578,22 +582,51 @@ func TestApplyRefusesRelativeSigner(t *testing.T) {
 	q.git(q.ai, q.agent, "add", ".")
 	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Add a signer")
 	patchFile := q.send()
-	for _, setting := range [][2]string{
-		{"gpg.program", "./scripts/sign"}, {"gpg.openpgp.program", "scripts/sign"},
-		{"gpg.x509.program", "scripts/sign"}, {"gpg.ssh.program", "scripts/sign"},
-		{"gpg.ssh.defaultKeyCommand", "scripts/sign -L"},
+	sshProgram := [2]string{"gpg.ssh.program", filepath.Join(q.bin, "fake-ssh-keygen")}
+	for _, settings := range [][][2]string{
+		{{"gpg.program", "./scripts/sign"}},
+		{{"gpg.openpgp.program", "scripts/sign"}},
+		{{"gpg.format", "x509"}, {"gpg.x509.program", "scripts/sign"}},
+		{{"gpg.format", "ssh"}, {"gpg.ssh.program", "scripts/sign"}, {"user.signingKey", "key::ssh-ed25519 AAAAfake"}},
+		{{"gpg.format", "ssh"}, sshProgram, {"gpg.ssh.defaultKeyCommand", "scripts/sign -L"}},
+		{{"gpg.format", "ssh"}, sshProgram, {"gpg.ssh.defaultKeyCommand", "/bin/sh ./scripts/sign"}},
+		{{"gpg.program", filepath.Join(q.auth, "lnd/fix-foo/scripts/sign")}},
 	} {
-		q.authGit("config", setting[0], setting[1])
+		for _, s := range settings {
+			q.authGit("config", s[0], s[1])
+		}
 		out, err := q.splitgh(q.auth, "apply", patchFile)
 		if b, err := os.ReadFile(ran); err == nil {
-			t.Fatalf("%s=%s: apply ran the agent's program:\n%s", setting[0], setting[1], b)
+			t.Fatalf("%v: apply ran the agent's program:\n%s", settings, b)
 		}
-		if err == nil || !strings.Contains(out, setting[1]) {
-			t.Fatalf("%s=%s: %v\n%s", setting[0], setting[1], err, out)
+		if err == nil {
+			t.Fatalf("%v: apply signed without a signer:\n%s", settings, out)
 		}
-		q.authGit("config", "--unset", setting[0])
+		for _, s := range settings {
+			q.authGit("config", "--unset", s[0])
+		}
 	}
+	// A program in the home directory, which git finds from ~.
+	gpg, err := os.ReadFile(filepath.Join(q.bin, "fake-gpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(q.auth, "bin/gpg"), string(gpg))
+	if err := os.Chmod(filepath.Join(q.auth, "bin/gpg"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	q.authGit("config", "gpg.program", "~/bin/gpg")
 	q.apply(patchFile)
+	q.authGit("config", "--unset", "gpg.program")
+	// SSH signing, with the key from gpg.ssh.defaultKeyCommand.
+	for _, s := range [][2]string{{"gpg.format", "ssh"}, sshProgram, {"gpg.ssh.defaultKeyCommand", "echo key::ssh-ed25519 AAAAfake"}} {
+		q.authGit("config", s[0], s[1])
+	}
+	q.commit("b.txt", "two\n", "Add b")
+	q.apply(q.send())
+	if !strings.Contains(q.authGit("cat-file", "commit", "refs/heads/fix-foo"), "-----BEGIN SSH SIGNATURE-----") {
+		t.Fatal("the commit has no SSH signature")
+	}
 }
 
 // A submodule's new commit is part of the change. Settings such as
