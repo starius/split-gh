@@ -11,9 +11,10 @@ The user reviews, signs and pushes every change from gh-auth.
   `gh pr create`, `gh pr comment` or `gh api -X POST`, are refused. Don't try
   to work around that: write a draft for the user instead.
 - **Clone and fetch with git as usual.** `git clone` and `git fetch` from
-  GitHub go through gh-auth, so private repositories work too. Pushing is
-  refused. Use `git clone https://github.com/OWNER/REPO` instead of
-  `gh repo clone`, and `git fetch origin pull/N/head` instead of
+  GitHub go through gh-auth for the repositories the user allows, private
+  ones included, and straight to GitHub for other public repositories.
+  Pushing doesn't work. Use `git clone https://github.com/OWNER/REPO`
+  instead of `gh repo clone`, and `git fetch origin pull/N/head` instead of
   `gh pr checkout`.
 - **Hand over commits with `split-gh send`.** Commit your work in a worktree,
   not the main checkout, and run `split-gh send` there. The user confirms the

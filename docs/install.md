@@ -9,9 +9,11 @@ What split-gh does:
 - **Reads GitHub.** In `ai`, `gh` is a shim. `split-gh serve` in gh-auth runs
   the real gh with a read-only token, for allowlisted commands and
   repositories.
-- **Fetches from GitHub.** In `ai`, `git clone` and `git fetch` of
-  `https://github.com/...` go through `split-gh serve`, which adds the token.
-  So private repositories work, and pushes are refused.
+- **Fetches from GitHub.** In `ai`, `git clone` and `git fetch` of a
+  repository in `read_repos` go through `split-gh serve`, which adds the
+  token. So private repositories work, and pushes are refused. Other
+  repositories come straight from GitHub, without a token, so public ones
+  work too.
 - **Hands over commits as a patch file.** In `ai`, `split-gh send` moves a
   patch file to gh-auth with `qvm-move`, which you confirm in dom0. In gh-auth,
   you review it with `split-gh diff`, add its commits to the branch with
@@ -65,7 +67,9 @@ Create `~/.config/split-gh/config.json`:
   policy already decides who can connect; the password is a second lock, in
   case the policy is ever wrong.
 - `read_repos` are the GitHub repositories `ai` may read, with `gh` and with
-  `git fetch`, as `OWNER/REPO` patterns.
+  `git fetch`, as `OWNER/REPO` patterns. git in `ai` fetches other
+  repositories from GitHub itself, without a token, so public ones need no
+  entry.
 - `local_repos` are the repositories in gh-auth, relative to your home
   directory, that `ai` may send patches for.
 
@@ -112,13 +116,14 @@ you confirm each patch.
 
 ## ai
 
-Build the client from source and install it, with `gh` as a symlink, earlier
-on PATH than any real `gh`:
+Build the client from source and install it, with `gh` and
+`git-remote-split-gh` as symlinks, earlier on PATH than any real `gh`:
 
 ```sh
 mkdir -p ~/.local/bin
 CGO_ENABLED=0 go build -trimpath -o ~/.local/bin/split-gh ./cmd/split-gh
 ln -sfn split-gh ~/.local/bin/gh
+ln -sfn split-gh ~/.local/bin/git-remote-split-gh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -142,15 +147,22 @@ keeps other machines and qubes from reaching them, and serve wants the
 password anyway. For a second agent qube with port 8402 in gh-auth, run
 `qvm-connect-tcp 8401:gh-auth:8402` there: the local port stays 8401.
 
-Make git fetch from GitHub through gh-auth:
+Make git use split-gh for GitHub:
 
 ```sh
-git config --global url.http://127.0.0.1:8401/.insteadOf https://github.com/
-git config --global --add url.http://127.0.0.1:8401/.insteadOf git@github.com:
-git config --global --add url.http://127.0.0.1:8401/.insteadOf ssh://git@github.com/
-git config --global http.http://127.0.0.1:8401/.extraHeader \
-  "Authorization: Bearer $(cat ~/.config/split-gh/password)"
+git config --global url.split-gh::https://github.com/.insteadOf https://github.com/
+git config --global --add url.split-gh::https://github.com/.insteadOf git@github.com:
+git config --global --add url.split-gh::https://github.com/.insteadOf ssh://git@github.com/
+git config --global protocol.split-gh.allow always
 ```
+
+Then git runs `git-remote-split-gh` for every GitHub repository. It asks
+`split-gh serve` whether the repository is in `read_repos`. If it is, git
+fetches through serve, which adds the token. If it isn't, or serve doesn't
+answer, git fetches straight from GitHub, without a token: public
+repositories work, also while serve isn't running. The last line is for
+submodules: git allows a transport it doesn't know only in commands you
+run yourself.
 
 `gh` with no arguments tells agents what it is and what they can do, and so
 does every refusal. For more, put the instructions in `docs/agents.md` where
@@ -165,9 +177,11 @@ split-gh serve
 ```
 
 It prints a line for each request: the gh command line and how it ended, each
-git fetch, and each refusal, such as a push. Ctrl-C stops it and ends the
-requests in flight. While it isn't running, `gh` in `ai` says to ask you to
-start it, and `git fetch` fails.
+git fetch, and each refusal, such as a push. It also prints each repository
+that git in `ai` fetches straight from GitHub, because it isn't in
+`read_repos`. Ctrl-C stops it and ends the requests in flight. While it isn't
+running, `gh` in `ai` says to ask you to start it, and git fetches only public
+repositories, straight from GitHub.
 
 ## Sending commits
 
@@ -242,7 +256,8 @@ them, and apply refuses it unless you pass `--force`.
 
 - gh: 60 requests a minute, 8 at once, and 60 s of gh for each.
 - git: 120 requests a minute, 4 at once, 30 minutes each, and a minute
-  without data ends one. A fetch takes two to four requests.
+  without data ends one. A fetch takes two to four requests, after one
+  question.
 - Any request: a client that stops reading for 30 s, or takes longer than
   that to send its request, is cut off, so it can't hold a slot.
 
@@ -278,7 +293,9 @@ move it aside.
   `read_repos`, and serve adds the token in gh-auth. A push is refused before
   it reaches GitHub, with a message that git shows as `remote:` lines. serve
   passes on only the headers git's protocol needs, and doesn't follow
-  redirects.
+  redirects. Before each fetch, `git-remote-split-gh` asks serve whether the
+  repository is in `read_repos`; serve answers from its config, without
+  asking GitHub.
 
 ## Verify
 
@@ -290,7 +307,11 @@ gh api repos/example/private/pulls/123/comments
 gh run view --log-failed
 gh pr threads 123
 git ls-remote https://github.com/example/private
+git ls-remote https://github.com/octocat/Hello-World
 ```
+
+The last is a public repository outside `read_repos`, which git fetches
+straight from GitHub.
 
 The full acceptance test runs from the split-gh source in `ai`, after setup:
 
@@ -303,7 +324,8 @@ go test ./cmd/split-gh -run '^TestQubesPrivateRead$' -count=1 -v
 
 It checks the repository is private and runs the four reads. It also sends
 hand-made write and GraphQL requests to serve to check they're refused, runs
-`git ls-remote`, and checks that a `git push --dry-run` is refused.
+`git ls-remote` on the repository and on `octocat/Hello-World`, and checks
+that a `git push --dry-run` is refused.
 The checkout's branch needs a completed workflow run. For the matrix of every
 read command, also set `SPLIT_GH_E2E_ISSUE`, `SPLIT_GH_E2E_RUN`,
 `SPLIT_GH_E2E_WORKFLOW` and `SPLIT_GH_E2E_RELEASE` to an issue, an Actions run,

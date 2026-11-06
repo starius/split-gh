@@ -142,19 +142,31 @@ func TestQubesPrivateRead(t *testing.T) {
 			}
 		})
 	}
-	// git, with the agent qube's insteadOf and password in its config.
+	// git, with the agent qube's config, and this split-gh as its
+	// git-remote-split-gh.
+	if err = os.Symlink(binary, filepath.Join(dir, "git-remote-split-gh")); err != nil {
+		t.Fatal(err)
+	}
 	git := func(args ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = checkout
-		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "PATH="+dir+":"+os.Getenv("PATH"))
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
 	t.Run("git ls-remote", func(t *testing.T) {
 		out, err := git("ls-remote", "https://github.com/"+repo, "HEAD")
 		if err != nil || len(out) < 41 || strings.Contains(out, "remote:") {
+			t.Fatalf("git ls-remote: %v\n%s", err, out)
+		}
+	})
+	t.Run("git ls-remote of a public repository outside read_repos", func(t *testing.T) {
+		// GitHub's own example repository, which git fetches straight from
+		// GitHub unless read_repos has it.
+		out, err := git("ls-remote", "https://github.com/octocat/Hello-World", "HEAD")
+		if err != nil || len(out) < 41 || strings.Contains(out, "split-gh:") {
 			t.Fatalf("git ls-remote: %v\n%s", err, out)
 		}
 	})

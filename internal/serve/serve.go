@@ -23,13 +23,14 @@ import (
 	"time"
 
 	"split-gh/internal/config"
+	"split-gh/internal/wire"
 )
 
 const (
 	ghPerMinute = 60
 	// ghSlots bounds concurrent gh runs; each one takes about 40 MB.
 	ghSlots = 8
-	// A fetch is a few requests.
+	// A fetch is a few requests, after a question.
 	gitPerMinute = 120
 	gitSlots     = 4
 	// minPassword is the shortest password serve accepts.
@@ -177,7 +178,8 @@ func readSecret(path string) (string, error) {
 }
 
 // ServeHTTP checks the limits and the password, then answers a gh read
-// (POST /gh) or a git fetch (any other path).
+// (POST /gh), the question before a git fetch (wire.FetchesPath) or a git
+// fetch (any other path).
 func (q *qube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A client that stops reading can't hold a request, and its slot: every
 	// write has a deadline. Answers that stream move it on with each write.
@@ -209,6 +211,8 @@ func (q *qube) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if isGH {
 		q.serveGH(w, r)
+	} else if repo, ok := strings.CutPrefix(r.URL.Path, wire.FetchesPath); ok {
+		q.answerFetches(w, r, repo)
 	} else {
 		q.serveGit(w, r)
 	}

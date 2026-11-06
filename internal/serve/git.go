@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"split-gh/internal/readpolicy"
+	"split-gh/internal/wire"
 )
 
 const (
@@ -30,9 +31,32 @@ Hand over commits with split-gh send. The user reviews, signs and pushes them.`
 // fetch, and a push's, which is refused.
 var gitPath = regexp.MustCompile(`^/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/(info/refs|git-upload-pack|git-receive-pack)$`)
 
+// answerFetches tells git-remote-split-gh, git's helper for GitHub URLs in
+// the agent qube, whether serve fetches repo for the qube: whether it is in
+// read_repos. If not, git there fetches it straight from GitHub, without a
+// token, which works for public repositories. It doesn't ask GitHub.
+func (q *qube) answerFetches(w http.ResponseWriter, r *http.Request, repo string) {
+	if r.Method != http.MethodGet || r.URL.RawQuery != "" {
+		fail(w, "split-gh: ask with GET "+wire.FetchesPath+"OWNER/REPO", http.StatusBadRequest)
+		return
+	}
+	if canonical, ok := readpolicy.CanonicalRepo(repo); !ok || canonical != repo {
+		fail(w, "split-gh: not a GitHub repository: "+repo, http.StatusBadRequest)
+		return
+	}
+	answer := wire.No
+	if readpolicy.Allowed(repo, q.conf.ReadRepos) {
+		answer = wire.Yes
+	} else {
+		q.printf("git: %s isn't in read_repos, so the qube fetches it from GitHub itself, without a token", repo)
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, answer+"\n")
+}
+
 // serveGit passes a git fetch from a repository in the qube's read_repos
-// on to GitHub, with the read token. In the agent qube, git has
-// url.http://127.0.0.1:8401/.insteadOf https://github.com/ in its config.
+// on to GitHub, with the read token. In the agent qube, git-remote-split-gh
+// sends git here for the repositories that answerFetches said yes to.
 func (q *qube) serveGit(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	what := r.Method + " " + r.URL.Path

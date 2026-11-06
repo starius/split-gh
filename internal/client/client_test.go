@@ -201,14 +201,14 @@ func TestAboutRequests(t *testing.T) {
 func TestRemoteURLs(t *testing.T) {
 	for _, tc := range []struct{ url, repo string }{
 		{"https://github.com/o/r.git", "o/r"}, {"git@github.com:o/r.git", "o/r"}, {"ssh://git@github.com/o/r", "o/r"},
-		{"http://127.0.0.1:8401/o/r.git", "o/r"}, {"http://127.0.0.1:8401/o/r", "o/r"},
+		{"split-gh::https://github.com/o/r.git", "o/r"}, {"split-gh::https://github.com/o/r", "o/r"},
 	} {
 		m := remoteRE.FindStringSubmatch(tc.url)
 		if m == nil || m[1] != tc.repo {
 			t.Errorf("%q: %q", tc.url, m)
 		}
 	}
-	for _, u := range []string{"http://example.com/o/r", "http://127.0.0.1:8401/o/r/x"} {
+	for _, u := range []string{"http://example.com/o/r", "split-gh::https://github.com/o/r/x", "http://127.0.0.1:8401/o/r"} {
 		if remoteRE.MatchString(u) {
 			t.Errorf("%q matched", u)
 		}
@@ -290,8 +290,8 @@ func TestInferRepoHonorsGHResolvedBase(t *testing.T) {
 		t.Fatalf("origin fallback: %q %v", got, err)
 	}
 	// git applies insteadOf to the URLs it reports, as the agent qube's
-	// config has it for the split-gh port.
-	run("config", "url.http://127.0.0.1:8401/.insteadOf", "https://github.com/")
+	// config has it for git-remote-split-gh.
+	run("config", "url.split-gh::https://github.com/.insteadOf", "https://github.com/")
 	if got, err := inferRepo(); err != nil || got != "fork/project" {
 		t.Fatalf("with insteadOf: %q %v", got, err)
 	}

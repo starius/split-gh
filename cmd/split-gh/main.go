@@ -16,6 +16,8 @@ import (
 const usage = `usage:
   in the agent qube:
     gh ...                       (symlink) read GitHub through gh-auth
+    git-remote-split-gh          (symlink) git's helper for GitHub URLs: fetch
+                                 through gh-auth, or else from GitHub directly
     split-gh send [--base COMMIT]
                                  hand this branch's commits over as a patch
   in gh-auth:
@@ -26,8 +28,11 @@ const usage = `usage:
                                  git am, which signs if your config says to`
 
 func main() {
-	if filepath.Base(os.Args[0]) == "gh" {
+	switch filepath.Base(os.Args[0]) {
+	case "gh":
 		os.Exit(client.Main(os.Args[1:]))
+	case "git-remote-split-gh":
+		os.Exit(client.RemoteHelper(os.Args[1:]))
 	}
 	args := os.Args[1:]
 	if len(args) == 0 {
