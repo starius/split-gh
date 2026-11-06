@@ -21,6 +21,13 @@ Nothing that runs in `ai` can change gh-auth or GitHub. `split-gh serve` only
 reads, and only while you run it. A patch only arrives when you accept the
 `qvm-move`.
 
+You need git 2.40 or newer in both qubes: split-gh formats patches with
+`GIT_ATTR_SOURCE`, so that `.gitattributes` in a checkout can't change them.
+Building needs Go 1.22 or newer. split-gh is tested with git 2.47 and 2.56,
+and with gh 2.103 in gh-auth. Debian 13's gh 2.46 lacks
+`gh pr checks --json` and `--template`, and `gh api --slurp`, so those
+requests fail there. GitHub's own package repository has a current gh.
+
 ## gh-auth
 
 Get the source into gh-auth, e.g. as a bundle: in `ai`, run
