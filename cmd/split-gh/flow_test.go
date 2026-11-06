@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -148,6 +149,44 @@ func (q *qubes) apply(args ...string) string {
 
 func (q *qubes) authGit(args ...string) string {
 	return q.git(q.auth, filepath.Join(q.auth, "lnd"), args...)
+}
+
+// job runs split-gh apply as a shell runs a job at a terminal: in a process
+// group of its own, which Ctrl-C there sends SIGINT to. It returns the output
+// and the group's ID. env adds to q.env's.
+func (q *qubes) job(patchFile string, env ...string) (string, int, error) {
+	q.t.Helper()
+	cmd := exec.Command(filepath.Join(q.bin, "split-gh"), "apply", patchFile)
+	cmd.Dir = q.auth
+	cmd.Env = append(q.env(q.auth), env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	out, err := cmd.CombinedOutput()
+	if cmd.Process == nil {
+		q.t.Fatal(err)
+	}
+	return string(out), cmd.Process.Pid, err
+}
+
+// wrapGit puts a git in front of the real one, which is "$real" in it, and
+// returns the PATH setting for split-gh to use it. Around the first git
+// update-ref of split-gh apply, the one that moves the branch first, it runs
+// the shell commands before and after.
+func (q *qubes) wrapGit(before, after string) string {
+	q.t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		q.t.Fatal(err)
+	}
+	dir := q.t.TempDir()
+	write(q.t, filepath.Join(dir, "git"), "#!/bin/sh\nreal="+real+"\n"+
+		"case \"$*\" in *'update-ref -m split-gh apply --stdin'*)\n"+
+		"\tif mkdir "+dir+"/once 2>/dev/null; then\n"+
+		"\t\t"+before+"\n\t\t\"$real\" \"$@\"; s=$?\n\t\t"+after+"\n\t\texit $s\n\tfi;;\nesac\n"+
+		"exec \"$real\" \"$@\"\n")
+	if err := os.Chmod(filepath.Join(dir, "git"), 0755); err != nil {
+		q.t.Fatal(err)
+	}
+	return "PATH=" + dir + ":" + q.bin + ":" + os.Getenv("PATH")
 }
 
 func TestSendApplyFlow(t *testing.T) {
@@ -342,6 +381,28 @@ func TestFailedApplyChangesNothing(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(userWT, "b.txt")); string(b) != "untracked\n" {
 		t.Fatalf("untracked file changed: %q", b)
+	}
+}
+
+// When something else moves the branch while apply runs, apply stops, and
+// putting things back must not undo that move.
+func TestFailedApplyKeepsOthersChanges(t *testing.T) {
+	q := newQubes(t)
+	wt := filepath.Join(q.auth, "lnd/fix-foo")
+	q.commit("a.txt", "one\n", "Add a")
+	q.apply(q.send())
+	tip := q.authGit("rev-parse", "refs/heads/fix-foo")
+	other := q.authGit("commit-tree", "-p", tip, "-m", "Someone else's", tip+"^{tree}")
+	q.commit("b.txt", "two\n", "Add b")
+	path := q.wrapGit(`"$real" -C `+filepath.Join(q.auth, "lnd")+` update-ref refs/heads/fix-foo `+other, "")
+	if out, _, err := q.job(q.send(), path); err == nil || !strings.Contains(out, "is at "+other) || strings.Contains(out, "back failed") {
+		t.Fatalf("apply: %v\n%s", err, out)
+	}
+	if q.authGit("rev-parse", "refs/heads/fix-foo", "refs/split-gh/applied/fix-foo") != other+"\n"+tip {
+		t.Fatal("failed apply undid the other move of the branch, or moved its marker")
+	}
+	if q.git(q.auth, wt, "symbolic-ref", "--short", "HEAD") != "fix-foo" || q.git(q.auth, wt, "status", "--porcelain") != "" {
+		t.Fatal("failed apply left the worktree elsewhere")
 	}
 }
 
