@@ -163,7 +163,7 @@ func roundTrip(dir, base string, commits []patch.Commit, texts []string) error {
 		return err
 	}
 	env := append(os.Environ(), "GIT_COMMITTER_NAME=split-gh", "GIT_COMMITTER_EMAIL=split-gh@localhost")
-	if _, err := patch.Git(wt, env, append(append([]string{}, patch.AmArgs...), "--quiet", "--no-gpg-sign", mbox)...); err != nil {
+	if _, err := patch.Git(wt, env, append(append([]string{}, patch.AmArgs...), "--no-gpg-sign", mbox)...); err != nil {
 		return fmt.Errorf("the patch doesn't apply with git am: %v", err)
 	}
 	replayed, err := patch.Range(wt, base, "HEAD")

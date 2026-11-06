@@ -14,9 +14,8 @@ What split-gh does:
   So private repositories work, and pushes are refused.
 - **Hands over commits as a patch file.** In `ai`, `split-gh send` moves a
   patch file to gh-auth with `qvm-move`, which you confirm in dom0. In gh-auth,
-  you review it with `split-gh diff` and prepare the branch with
-  `split-gh apply`. Then you add the commits with the `git am` it prints,
-  which signs them if your git config says to, and push yourself.
+  you review it with `split-gh diff`, add its commits to the branch with
+  `split-gh apply`, and push yourself.
 
 Nothing that runs in `ai` can change gh-auth or GitHub. `split-gh serve` only
 reads, and only while you run it. A patch only arrives when you accept the
@@ -78,10 +77,11 @@ permissions. Contents covers `git fetch` too. serve runs gh with a temporary
 home and config, the token, and prompting disabled; it doesn't use your `gh`
 aliases or extensions.
 
-split-gh doesn't sign. The `git am` that `split-gh apply` prints does, if
-your git config says to, as for your own commits: set `commit.gpgSign = true`
-and your signing key. It runs in the worktree, among the agent's files, so
-give signing programs and keys by name or absolute path.
+split-gh doesn't sign. `split-gh apply` adds the commits with `git am`,
+which signs them if your git config says to, as it does your own: set
+`commit.gpgSign = true` and your signing key. git am runs in the worktree,
+among the agent's files, so give signing programs and keys by name or
+absolute path.
 
 ## dom0
 
@@ -179,42 +179,37 @@ Run them in gh-auth:
   bidirectional characters show as `<U+...>`, so a patch can't hide lines.
 - `split-gh apply` puts the worktree at the same path, `~/lnd/fix-foo`, on
   the branch, creating them if needed. The branch keeps the commits that
-  didn't change, so a series that only grew is a fast-forward. apply runs
-  `git am` on the rest once, without signing, to check that they come out
-  exactly as the patch you reviewed, and puts the worktree back. Then it
-  prints two commands: a `git am` that adds them, and signs them if your git
-  config says to, and the push.
+  didn't change, so a series that only grew is a fast-forward. apply adds
+  the rest with `git am`, which signs them if your git config says to, and
+  checks that they come out exactly as the patch you reviewed. Then it
+  prints the push command.
 - apply refuses if the worktree has uncommitted changes. It also refuses to
-  drop commits that aren't in the last patch it prepared the branch for, such
-  as your own, unless you pass `--force`. It keeps that patch, and the mbox
-  for `git am`, in `.git/split-gh/` of the repository.
-- No git hook or filter runs during apply, or in the `git am` it prints, yours
-  included: with a relative `core.hooksPath`, or a filter configured as a
-  relative path, git would run them from the worktree, which holds the
-  agent's files.
+  drop commits that it didn't put on the branch, such as your own, unless
+  you pass `--force`. It records the tip it set in
+  `refs/split-gh/applied/<branch>`.
+- No git hook or filter runs during apply, yours included: with a relative
+  `core.hooksPath`, or a filter configured as a relative path, git would run
+  them from the worktree, which holds the agent's files.
 
 apply prints, for example:
 
 ```text
-fix-foo is at 2f1493310abc, in /home/user/lnd/fix-foo, with 1 of the patch's 2 commits.
-Add the other commit with git am, which signs if your git config says to (commit.gpgSign).
-It runs no hooks or filters, as they could be the agent's files:
-  cd /home/user/lnd/fix-foo && git -c core.hooksPath=/dev/null -c core.fsmonitor=false am --keep --keep-cr --no-3way --no-message-id --no-scissors --whitespace=nowarn /home/user/lnd/.git/split-gh/fix-foo.mbox
-Then push:
+fix-foo is now at 4b5a44b552a7: 2 commits on 2f1493310abc, 1 kept and 1 added with git am.
+Push it yourself:
   cd /home/user/lnd && git push origin refs/heads/fix-foo:refs/heads/fix-foo
+Removed /home/user/QubesIncoming/ai/lnd-fix-foo-1a2b3c4.patch.
 ```
 
 The worktree holds the agent's files. Read them there, but don't run
 anything that uses them, such as a build, tests or `go generate`; do that
 in `ai`. Git counts too: if your config gives `core.hooksPath` or a filter
 as a relative path, git commands in the worktree run the agent's files.
-That is why apply's own git commands, and the `git am` it prints, run no
-hooks or filters, and why the push command it prints runs from the main
-checkout. The main checkout's hooks
-stay yours: apply refuses while git there would take a hook from a worktree,
-e.g. a patch for `~/lnd/.githooks` when `core.hooksPath` is `.githooks`. It
-follows the hooks directory, and each hook in it, as git would, through `..`
-and symlinks.
+That is why apply's git commands, its git am included, run no hooks or
+filters, and why the push command it prints runs from the main checkout.
+The main checkout's hooks stay yours: apply refuses while git there would
+take a hook from a worktree, e.g. a patch for `~/lnd/.githooks` when
+`core.hooksPath` is `.githooks`. It follows the hooks directory, and each
+hook in it, as git would, through `..` and symlinks.
 
 What send sends: the commits on the current branch that no remote has, so
 `git rev-list HEAD --not --remotes`; or the ones after `--base COMMIT`. Their

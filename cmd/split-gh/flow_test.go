@@ -137,30 +137,13 @@ func (q *qubes) splitgh(home string, args ...string) (string, error) {
 	return q.run(home, home, filepath.Join(q.bin, "split-gh"), args...)
 }
 
-// apply runs split-gh apply in gh-auth, then the git am it prints, as the
-// user would.
 func (q *qubes) apply(args ...string) string {
 	q.t.Helper()
 	out, err := q.splitgh(q.auth, append([]string{"apply"}, args...)...)
 	if err != nil {
 		q.t.Fatalf("apply: %v\n%s", err, out)
 	}
-	if line := command(out, " am "); line != "" {
-		if am, err := q.run(q.auth, q.auth, "sh", "-c", line); err != nil {
-			q.t.Fatalf("%s: %v\n%s", line, err, am)
-		}
-	}
 	return out
-}
-
-// command is the command line in apply's output that contains what, or "".
-func command(out, what string) string {
-	for _, line := range strings.Split(out, "\n") {
-		if cmd, ok := strings.CutPrefix(line, "  cd "); ok && strings.Contains(cmd, what) {
-			return "cd " + cmd
-		}
-	}
-	return ""
 }
 
 func (q *qubes) authGit(args ...string) string {
@@ -237,8 +220,8 @@ func TestSendApplyFlow(t *testing.T) {
 	if q.authGit("rev-parse", "fix-foo~1") != userTip || q.authGit("rev-parse", "fix-foo^{tree}") != q.git(q.ai, agent, "rev-parse", "HEAD^{tree}") {
 		t.Fatal("agent's commit not added on the user's")
 	}
-	if _, err := os.Stat(filepath.Join(q.auth, "lnd/.git/split-gh/fix-foo.patch")); err != nil {
-		t.Fatalf("apply kept no record of the patch: %v", err)
+	if q.authGit("rev-parse", "refs/split-gh/applied/fix-foo") != q.authGit("rev-parse", "fix-foo") {
+		t.Fatal("applied marker not updated")
 	}
 }
 
@@ -318,19 +301,26 @@ func TestFailedApplyChangesNothing(t *testing.T) {
 	q := newQubes(t)
 	userWT := filepath.Join(q.auth, "lnd/fix-foo")
 
-	// apply's check fails on the first apply: no worktree, no branch. The
-	// forged patch has a "From:" line at the top of its message, which git am
-	// would take as the author instead of the one you reviewed.
+	// The first apply fails: no worktree, no branch.
 	q.commit("a.txt", "one\n", "Add a")
 	patchFile := q.send()
+	failed := func(what, want string) {
+		t.Helper()
+		if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, want) {
+			t.Fatalf("%s: %v\n%s", what, err, out)
+		}
+		if _, err := os.Stat(userWT); !os.IsNotExist(err) || q.authGit("branch", "--list", "fix-foo") != "" {
+			t.Fatalf("%s: failed apply left a worktree or branch", what)
+		}
+	}
+	q.authGit("config", "gpg.program", "false")
+	failed("signing fails", "gpg failed to sign")
+	q.authGit("config", "--unset", "gpg.program")
+	// A "From:" line at the top of the message, which git am takes as the
+	// author instead of the one you reviewed.
 	good, _ := os.ReadFile(patchFile)
 	write(t, patchFile, strings.Replace(string(good), "Subject: Add a\n\n", "Subject: Add a\n\nFrom: Evil <evil@ai>\n\n", 1))
-	if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, "came out different") {
-		t.Fatalf("apply of a patch that git am changes: %v\n%s", err, out)
-	}
-	if _, err := os.Stat(userWT); !os.IsNotExist(err) || q.authGit("branch", "--list", "fix-foo") != "" {
-		t.Fatal("failed apply left a worktree or branch")
-	}
+	failed("forged author", "came out different")
 	write(t, patchFile, string(good))
 	q.apply(patchFile)
 	tip := q.authGit("rev-parse", "refs/heads/fix-foo")
@@ -356,7 +346,7 @@ func TestApplyRunsNoHooks(t *testing.T) {
 	ran := filepath.Join(q.auth, "ran")
 	q.authGit("config", "core.hooksPath", ".githooks")
 	q.authGit("config", "core.fsmonitor", ".githooks/fsmonitor")
-	for _, name := range []string{"post-checkout", "reference-transaction", "fsmonitor", "pre-push"} {
+	for _, name := range []string{"post-checkout", "reference-transaction", "fsmonitor", "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-push"} {
 		hook := filepath.Join(q.agent, ".githooks", name)
 		write(t, hook, "#!/bin/sh\necho "+name+" >> "+ran+"\n")
 		if err := os.Chmod(hook, 0755); err != nil {
@@ -449,8 +439,9 @@ func TestApplyRefusesWorktreeAtHooks(t *testing.T) {
 // pushLine is the push command in apply's output.
 func pushLine(t *testing.T, out string) string {
 	t.Helper()
-	line := command(out, " git push ")
-	if line == "" {
+	_, line, ok := strings.Cut(out, "Push it yourself:\n  ")
+	line, _, _ = strings.Cut(line, "\n")
+	if !ok || line == "" {
 		t.Fatalf("no push command:\n%s", out)
 	}
 	return line
@@ -492,12 +483,14 @@ func TestPushCommandPushesOnlyTheBranch(t *testing.T) {
 	push(out)
 }
 
-// The branch moves last, and only if git can move it; here a branch fix-foo
-// is in the way of fix-foo/bar. A failed move leaves no worktree or branch.
-func TestFailedBranchMoveChangesNothing(t *testing.T) {
+// apply moves the branch and its marker together, or neither. Here the
+// marker can't be written: one for a deleted branch fix-foo is in its way.
+func TestApplyMovesBranchAndMarkerTogether(t *testing.T) {
 	q := newQubes(t)
 	q.commit("a.txt", "one\n", "Add a")
 	q.apply(q.send())
+	q.authGit("worktree", "remove", "fix-foo")
+	q.authGit("branch", "-D", "fix-foo")
 	main := filepath.Join(q.ai, "lnd")
 	q.git(q.ai, main, "worktree", "remove", "--force", "fix-foo")
 	q.git(q.ai, main, "branch", "-D", "fix-foo")
@@ -505,7 +498,7 @@ func TestFailedBranchMoveChangesNothing(t *testing.T) {
 	q.agent = filepath.Join(main, "bar")
 	q.commit("b.txt", "two\n", "Add b")
 	patchFile := q.send()
-	if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, "refs/heads/fix-foo") {
+	if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, "refs/split-gh/applied/fix-foo") {
 		t.Fatalf("apply: %v\n%s", err, out)
 	}
 	if q.authGit("branch", "--list", "fix-foo/bar") != "" {
@@ -514,14 +507,10 @@ func TestFailedBranchMoveChangesNothing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(q.auth, "lnd/bar")); !os.IsNotExist(err) {
 		t.Fatal("failed apply left the worktree")
 	}
-	if _, err := os.Stat(filepath.Join(q.auth, "lnd/.git/split-gh/fix-foo/bar.mbox")); !os.IsNotExist(err) {
-		t.Fatal("failed apply left an mbox for git am")
-	}
-	q.authGit("worktree", "remove", "--force", "fix-foo")
-	q.authGit("branch", "-D", "fix-foo")
+	q.authGit("update-ref", "-d", "refs/split-gh/applied/fix-foo")
 	q.apply(patchFile)
-	if q.authGit("rev-parse", "refs/heads/fix-foo/bar^{tree}") != q.git(q.ai, q.agent, "rev-parse", "HEAD^{tree}") {
-		t.Fatal("the tree in gh-auth differs from the agent's")
+	if q.authGit("rev-parse", "refs/split-gh/applied/fix-foo/bar") != q.authGit("rev-parse", "refs/heads/fix-foo/bar") {
+		t.Fatal("marker not set")
 	}
 }
 
@@ -585,35 +574,23 @@ func TestApplyRunsNoFiltersOfNewWorktrees(t *testing.T) {
 	}
 }
 
-// apply never signs: the git am that it prints does, if your git config says
-// to. The harness sets commit.gpgSign, so a git am that apply runs itself, to
-// check the patches, must not sign.
-func TestApplyDoesNotSign(t *testing.T) {
+// split-gh doesn't sign: git am does, if your git config says to. The harness
+// sets commit.gpgSign.
+func TestApplySignsOnlyIfConfigured(t *testing.T) {
 	q := newQubes(t)
-	ran := filepath.Join(q.auth, "ran")
-	signer := filepath.Join(q.auth, "bin/sign")
-	write(t, signer, "#!/bin/sh\necho ran >> "+ran+"\nexec "+filepath.Join(q.bin, "fake-gpg")+" \"$@\"\n")
-	if err := os.Chmod(signer, 0755); err != nil {
-		t.Fatal(err)
+	signed := func() bool {
+		return strings.Contains(q.authGit("cat-file", "commit", "refs/heads/fix-foo"), "\ngpgsig ")
 	}
-	q.authGit("config", "gpg.program", signer)
 	q.commit("a.txt", "one\n", "Add a")
-	out, err := q.splitgh(q.auth, "apply", q.send())
-	if err != nil {
-		t.Fatalf("apply: %v\n%s", err, out)
+	q.apply(q.send())
+	if !signed() {
+		t.Fatal("commit.gpgSign is set, but the commit is not signed")
 	}
-	if _, err := os.Stat(ran); err == nil {
-		t.Fatal("apply signed")
-	}
-	if q.authGit("rev-parse", "refs/heads/fix-foo") != q.authGit("rev-parse", "origin/master") {
-		t.Fatal("apply added commits itself")
-	}
-	line := command(out, " am ")
-	if am, err := q.run(q.auth, q.auth, "sh", "-c", line); err != nil {
-		t.Fatalf("%s: %v\n%s", line, err, am)
-	}
-	if _, err := os.Stat(ran); err != nil || !strings.Contains(q.authGit("cat-file", "commit", "refs/heads/fix-foo"), "\ngpgsig ") {
-		t.Fatal("the printed git am didn't sign")
+	q.authGit("config", "commit.gpgSign", "false")
+	q.commit("b.txt", "two\n", "Add b")
+	q.apply(q.send())
+	if signed() {
+		t.Fatal("commit.gpgSign is off, but the commit is signed")
 	}
 }
 

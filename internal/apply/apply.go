@@ -1,8 +1,8 @@
 // Package apply is what the user runs in gh-auth to review and take a patch
 // file from ai: `split-gh diff` and `split-gh apply`. Nothing in ai can start
 // it; the patch only arrives through qvm-move, which the user confirms. apply
-// never signs: it prints the git am that adds the commits, which the user
-// runs, and which signs them if the user's git config says to.
+// adds the commits with git am, which signs them if the user's git config
+// says to, as it does the user's own; split-gh doesn't sign.
 package apply
 
 import (
@@ -21,12 +21,9 @@ import (
 	"split-gh/internal/patch"
 )
 
-// apply keeps two files for each branch in the repository's git directory:
-//   - split-gh/<branch>.patch, the last patch file it prepared the branch for.
-//     A commit on the branch that isn't in it, such as one of yours, isn't
-//     the agent's, so apply drops it only with --force.
-//   - split-gh/<branch>.mbox, the patches that the printed git am adds.
-const stateDir = "split-gh"
+// appliedRef records the tip apply last set on each branch. Commits above it
+// were put there by someone else, so apply won't drop them without --force.
+const appliedRef = "refs/split-gh/applied/"
 
 type plan struct {
 	file      string
@@ -37,13 +34,12 @@ type plan struct {
 	worktree  string
 	exists    bool     // the worktree exists
 	worktrees []string // the patch's worktree and the other linked worktrees, symlinks resolved
-	gitDir    string   // the repository's git directory, where apply keeps its files
 	tip       string   // the branch's commit, "" if there is no branch
+	applied   string   // the tip apply last set, "" if none
 	old       []patch.Commit
 	oldTexts  []string
 	keep      int      // leading commits of the branch that equal the patch's
 	lost      []string // commits on the branch whose change the patch doesn't have
-	foreign   bool     // some of them aren't in the last patch apply prepared
 }
 
 func load(file string) (*plan, error) {
@@ -94,10 +90,8 @@ func load(file string) (*plan, error) {
 	if patch.Ref(p.repo, p.h.Base) != p.h.Base {
 		return nil, fmt.Errorf("base commit %s is not in %s; fetch it (git fetch --all) and rerun", p.h.Base[:12], p.repo)
 	}
-	if p.gitDir, err = revParse(p.repo, "--path-format=absolute", "--git-common-dir"); err != nil {
-		return nil, err
-	}
 	p.tip = patch.Ref(p.repo, "refs/heads/"+p.h.Branch)
+	p.applied = patch.Ref(p.repo, appliedRef+p.h.Branch)
 	p.worktree = filepath.Join(p.repo, p.h.Worktree)
 	if err := p.checkHooks(real); err != nil {
 		return nil, err
@@ -119,34 +113,17 @@ func load(file string) (*plan, error) {
 		p.oldTexts[p.keep] != "" && patch.Key(p.oldTexts[p.keep]) == patch.Key(p.patches[p.keep]) {
 		p.keep++
 	}
-	inPatch, prepared := keys(p.patches), map[string]bool{}
-	if data, err := os.ReadFile(p.state("patch")); err == nil {
-		if _, texts, err := patch.Parse(data); err == nil {
-			prepared = keys(texts)
-		}
+	inPatch := map[string]bool{}
+	for _, t := range p.patches {
+		inPatch[patch.Key(t)] = true
 	}
 	for i := p.keep; i < len(p.old); i++ {
-		key := patch.Key(p.oldTexts[i])
-		if p.oldTexts[i] == "" || !inPatch[key] {
+		if p.oldTexts[i] == "" || !inPatch[patch.Key(p.oldTexts[i])] {
 			line, _ := patch.Git(p.repo, nil, "log", "-1", "--format=%h %s", p.old[i].ID)
 			p.lost = append(p.lost, patch.Visible(strings.TrimSpace(line)))
-			p.foreign = p.foreign || p.oldTexts[i] == "" || !prepared[key]
 		}
 	}
 	return p, nil
-}
-
-func keys(texts []string) map[string]bool {
-	m := map[string]bool{}
-	for _, t := range texts {
-		m[patch.Key(t)] = true
-	}
-	return m
-}
-
-// state is the path of one of the files apply keeps for the branch.
-func (p *plan) state(ext string) string {
-	return filepath.Join(p.gitDir, stateDir, p.h.Branch+"."+ext)
 }
 
 // checkWorktree requires the target to be a worktree of the repository on the
@@ -310,10 +287,10 @@ func revParse(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
-// needsForce reports whether applying would drop commits that aren't in the
-// last patch apply prepared the branch for, e.g. the user's own in gh-auth.
+// needsForce reports whether applying would drop commits that apply didn't
+// put on the branch, e.g. the user's own edits in gh-auth.
 func (p *plan) needsForce() bool {
-	return p.foreign
+	return len(p.lost) > 0 && p.tip != p.applied
 }
 
 func (p *plan) describe(w io.Writer) {
@@ -330,11 +307,11 @@ func (p *plan) describe(w io.Writer) {
 	}
 	base, _ := patch.Git(p.repo, nil, "log", "-1", "--format=%h %s", p.h.Base)
 	fmt.Fprintf(w, "Base      %s\n", patch.Visible(strings.TrimSpace(base)))
-	fmt.Fprintf(w, "Apply     keeps %d of the branch's commits; the git am it prints adds %d\n", p.keep, len(p.patches)-p.keep)
+	fmt.Fprintf(w, "Apply     keeps %d of the branch's commits, then adds %d with git am\n", p.keep, len(p.patches)-p.keep)
 	if len(p.lost) > 0 {
 		what := "the patch replaces"
 		if p.needsForce() {
-			what = "the patch drops, not all from the agent; apply needs --force"
+			what = "split-gh didn't put there; apply needs --force to drop"
 		}
 		fmt.Fprintf(w, "          commits %s:\n", what)
 		for _, l := range p.lost {
@@ -401,11 +378,10 @@ func unified(w io.Writer, oldLabel, newLabel string, old, new []string) error {
 	return nil
 }
 
-// Apply prepares the same-path worktree and branch for the patch file's
-// series, and prints the git am that adds its commits.
+// Apply updates the same-path worktree to the patch file's series.
 func Apply(args []string) int {
 	flags := flag.NewFlagSet("apply", flag.ContinueOnError)
-	force := flags.Bool("force", false, "drop commits on the branch that aren't in the last patch apply prepared")
+	force := flags.Bool("force", false, "drop commits on the branch that split-gh didn't put there")
 	if flags.Parse(args) != nil || flags.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: split-gh apply [--force] PATCH")
 		return 2
@@ -421,11 +397,9 @@ func Apply(args []string) int {
 	return 0
 }
 
-// apply puts the worktree on the branch at the last commit it keeps, and
-// writes the rest of the patches to an mbox for the git am that it prints.
 func (p *plan) apply(force bool) error {
 	if p.needsForce() && !force {
-		return fmt.Errorf("%s has commits that aren't in the last patch apply prepared, such as your own, and this patch drops them:\n  %s\n"+
+		return fmt.Errorf("%s has commits that split-gh didn't put there, and this patch drops them:\n  %s\n"+
 			"The agent sees them once you push them: push, let the agent build on them and send again.\n"+
 			"Or rerun with --force to drop them",
 			p.h.Branch, strings.Join(p.lost, "\n  "))
@@ -457,14 +431,14 @@ func (p *plan) apply(force bool) error {
 			return err
 		}
 	}
-	err := p.check()
+	tip, err := p.commit()
 	if err == nil {
-		err = p.setBranch(p.tip, start)
+		err = p.setRefs([2]string{p.tip, p.applied}, [2]string{tip, tip})
 	}
 	if err == nil {
-		// This also takes the worktree back from check's commits to start.
+		// HEAD is at tip already, so this only attaches it to the branch.
 		if _, err = patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch); err != nil {
-			if undo := p.setBranch(start, p.tip); undo != nil {
+			if undo := p.setRefs([2]string{tip, tip}, [2]string{p.tip, p.applied}); undo != nil {
 				err = fmt.Errorf("%v\nMoving %s back failed too: %v", err, p.h.Branch, undo)
 			}
 		}
@@ -478,126 +452,90 @@ func (p *plan) apply(force bool) error {
 		}
 		return err
 	}
-	if err := p.save(); err != nil {
-		return fmt.Errorf("%s is ready at %s, but apply couldn't write its files: %v\nRerun apply", p.h.Branch, start[:12], err)
-	}
-	rest := len(p.patches) - p.keep
-	fmt.Printf("%s is at %s, in %s, with %d of the patch's %d commits.\n", p.h.Branch, start[:12], p.worktree, p.keep, len(p.patches))
+	fmt.Printf("%s is now at %s: %d commits on %s, %d kept and %d added with git am.\n",
+		p.h.Branch, tip[:12], len(p.patches), p.h.Base[:12], p.keep, len(p.patches)-p.keep)
 	// From the main checkout: in the worktree, with a relative
 	// core.hooksPath, git push would run the agent's pre-push hook.
-	push := fmt.Sprintf("  cd %s && %s\n", quote(p.repo), p.pushCommand(start))
-	if rest == 0 {
-		fmt.Print("Push it yourself:\n" + push)
-	} else {
-		am, err := patch.Command(p.worktree, append(append([]string{}, patch.AmArgs...), p.state("mbox"))...)
-		if err != nil {
-			return err
-		}
-		what := fmt.Sprintf("the other %d commits", rest)
-		if rest == 1 {
-			what = "the other commit"
-		}
-		fmt.Printf("Add %s with git am, which signs if your git config says to (commit.gpgSign).\n"+
-			"It runs no hooks or filters, as they could be the agent's files:\n  cd %s && %s\nThen push:\n%s",
-			what, quote(p.worktree), shellJoin(am.Args), push)
-	}
+	fmt.Printf("Push it yourself:\n  cd %s && %s\n", quote(p.repo), p.pushCommand(tip))
 	if err := os.Remove(p.file); err == nil {
 		fmt.Printf("Removed %s.\n", p.file)
 	}
 	return nil
 }
 
-// check runs git am, without signing, on the patches after the kept ones,
-// in the worktree at the last kept commit. It requires one commit per patch,
-// and that each of the branch's commits then formats to exactly its patch:
-// so the git am that apply prints gives the commits you reviewed. It leaves
-// the worktree at the commits it made, which nothing refers to.
-func (p *plan) check() error {
-	if p.keep == len(p.patches) {
-		return nil
+// commit adds the patches after the kept commits with git am, on the
+// worktree's HEAD. git am signs them if your git config says to, as when you
+// run it yourself. Then commit checks that each of the branch's commits
+// formats to exactly its patch, and returns the new tip.
+func (p *plan) commit() (string, error) {
+	if rest := p.patches[p.keep:]; len(rest) > 0 {
+		f, err := os.CreateTemp("", "split-gh-*.mbox")
+		if err != nil {
+			return "", err
+		}
+		defer os.Remove(f.Name())
+		_, err = f.WriteString(strings.Join(rest, ""))
+		if err2 := f.Close(); err == nil {
+			err = err2
+		}
+		if err != nil {
+			return "", err
+		}
+		cmd, err := patch.Command(p.worktree, append(append([]string{}, patch.AmArgs...), f.Name())...)
+		if err != nil {
+			return "", err
+		}
+		cmd.Stdin = os.Stdin // for a signing program that asks for a passphrase
+		if out, err := cmd.CombinedOutput(); err != nil {
+			patch.Git(p.worktree, nil, "am", "--abort")
+			return "", fmt.Errorf("git am failed:\n%s", patch.Visible(string(out)))
+		}
 	}
-	f, err := os.CreateTemp("", "split-gh-*.mbox")
+	tip := patch.Ref(p.worktree, "HEAD")
+	commits, err := patch.Range(p.worktree, p.h.Base, tip)
 	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	_, err = f.WriteString(strings.Join(p.patches[p.keep:], ""))
-	if err2 := f.Close(); err == nil {
-		err = err2
-	}
-	if err != nil {
-		return err
-	}
-	cmd, err := patch.Command(p.worktree, append(append([]string{}, patch.AmArgs...), "--quiet", "--no-gpg-sign", f.Name())...)
-	if err != nil {
-		return err
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		patch.Git(p.worktree, nil, "am", "--abort")
-		return fmt.Errorf("git am failed:\n%s", patch.Visible(string(out)))
-	}
-	commits, err := patch.Range(p.worktree, p.h.Base, "HEAD")
-	if err != nil {
-		return err
+		return "", err
 	}
 	if !patch.Linear(p.h.Base, commits) || len(commits) != len(p.patches) {
-		return errors.New("git am did not make one commit per patch")
+		return "", errors.New("git am did not make one commit per patch")
 	}
 	texts, err := patch.Format(p.worktree, patch.IDs(commits))
 	if err != nil {
-		return err
+		return "", err
 	}
 	for i := range texts {
 		if patch.Key(texts[i]) != patch.Key(p.patches[i]) {
-			return fmt.Errorf("patch %d (%s) came out different after git am", i+1, patch.Subject(p.patches[i]))
+			return "", fmt.Errorf("patch %d (%s) came out different after git am", i+1, patch.Subject(p.patches[i]))
 		}
 	}
-	return nil
+	return tip, nil
 }
 
-// save writes the files apply keeps for the branch, once the branch is
-// ready: the mbox of the patches that git am adds, or no mbox if there are
-// none, and the patch file.
-func (p *plan) save() error {
-	if err := os.MkdirAll(filepath.Dir(p.state("patch")), 0700); err != nil {
-		return err
-	}
-	if p.keep == len(p.patches) {
-		if err := os.Remove(p.state("mbox")); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
+// setRefs moves the branch and its applied marker from the values in from to
+// the values in to, in one transaction: both move or neither does, and only
+// if neither changed since apply read them. "" is a ref that doesn't exist.
+func (p *plan) setRefs(from, to [2]string) error {
+	var script strings.Builder
+	for i, ref := range []string{"refs/heads/" + p.h.Branch, appliedRef + p.h.Branch} {
+		old := from[i]
+		if old == "" {
+			old = strings.Repeat("0", len(p.h.Base))
 		}
-	} else if err := os.WriteFile(p.state("mbox"), []byte(strings.Join(p.patches[p.keep:], "")), 0600); err != nil {
-		return err
+		if to[i] == "" {
+			fmt.Fprintf(&script, "delete %s %s\n", ref, old)
+		} else {
+			fmt.Fprintf(&script, "update %s %s %s\n", ref, to[i], old)
+		}
 	}
-	data, err := patch.Encode(p.h, p.patches)
+	cmd, err := patch.Command(p.repo, "update-ref", "-m", "split-gh apply", "--stdin")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p.state("patch"), data, 0600)
-}
-
-// setBranch moves the branch from from to to, if nobody moved it since apply
-// read it. "" is a branch that doesn't exist.
-func (p *plan) setBranch(from, to string) error {
-	zero := strings.Repeat("0", len(p.h.Base))
-	if from == "" {
-		from = zero
+	cmd.Stdin = strings.NewReader(script.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git update-ref: %s", patch.Visible(strings.TrimSpace(string(out))))
 	}
-	args := []string{"update-ref", "-m", "split-gh apply", "refs/heads/" + p.h.Branch, to, from}
-	if to == "" {
-		args = []string{"update-ref", "-m", "split-gh apply", "-d", "refs/heads/" + p.h.Branch, from}
-	}
-	_, err := patch.Git(p.repo, nil, args...)
-	return err
-}
-
-// shellJoin writes a command line for a shell.
-func shellJoin(args []string) string {
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		quoted[i] = quote(a)
-	}
-	return strings.Join(quoted, " ")
+	return nil
 }
 
 // quote quotes s for a shell, unless it needs none.
@@ -609,13 +547,11 @@ func quote(s string) string {
 }
 
 // pushCommand is the push the user runs: a plain push when the remote branch
-// is behind start, else one that only overwrites what the user has fetched.
-// start is the branch now; the commits that git am adds go on it, so the
-// remote branch is behind the new tip exactly when it is behind start.
+// is behind tip, else one that only overwrites what the user has fetched.
 // It names the branch by its full ref on both sides. Short, git push would
 // read "+main" as a forced push of main, and could take "heads/main" for
 // refs/heads/main.
-func (p *plan) pushCommand(start string) string {
+func (p *plan) pushCommand(tip string) string {
 	remote := "origin"
 	for _, key := range []string{"branch." + p.h.Branch + ".pushRemote", "remote.pushDefault", "branch." + p.h.Branch + ".remote"} {
 		if out, err := patch.Git(p.repo, nil, "config", "--get", key); err == nil && strings.TrimSpace(out) != "" {
@@ -625,7 +561,7 @@ func (p *plan) pushCommand(start string) string {
 	}
 	ref := "refs/heads/" + p.h.Branch
 	if r := patch.Ref(p.repo, "refs/remotes/"+remote+"/"+p.h.Branch); r != "" {
-		if _, err := patch.Git(p.repo, nil, "merge-base", "--is-ancestor", r, start); err != nil {
+		if _, err := patch.Git(p.repo, nil, "merge-base", "--is-ancestor", r, tip); err != nil {
 			return fmt.Sprintf("git push --force-with-lease=%s:%s %s %s:%s", ref, r, quote(remote), ref, ref)
 		}
 	}

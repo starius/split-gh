@@ -22,8 +22,8 @@ const usage = `usage:
     split-gh serve               answer the agent qubes until Ctrl-C
     split-gh diff PATCH          compare the branch with a patch from the agent
     split-gh apply [--force] PATCH
-                                 prepare the branch, and print the git am
-                                 that adds the patch's commits`
+                                 add the patch's commits to the branch with
+                                 git am, which signs if your config says to`
 
 func main() {
 	if filepath.Base(os.Args[0]) == "gh" {
