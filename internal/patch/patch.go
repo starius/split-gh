@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -293,6 +294,12 @@ func IDs(commits []Commit) []string {
 // those in dir's configuration. A git that this git starts in another
 // worktree reads that worktree's, which can have others: run such a step in
 // that worktree instead.
+//
+// git runs in a process group of its own, which Ctrl-C at the terminal
+// doesn't reach, so it isn't stopped halfway through moving a ref; split-gh
+// apply catches Ctrl-C and puts things back itself. A git that must reach
+// the terminal, such as one that may ask for a passphrase, needs
+// SysProcAttr cleared.
 func Command(dir string, args ...string) (*exec.Cmd, error) {
 	safe := []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
 	drivers, err := filterDrivers(dir)
@@ -305,6 +312,7 @@ func Command(dir string, args ...string) (*exec.Cmd, error) {
 	}
 	cmd := exec.Command("git", append(safe, args...)...)
 	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return cmd, nil
 }
 
@@ -312,6 +320,7 @@ func Command(dir string, args ...string) (*exec.Cmd, error) {
 func filterDrivers(dir string) ([]string, error) {
 	cmd := exec.Command("git", "config", "--null", "--name-only", "--get-regexp", `^filter\.`)
 	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // as in Command
 	out, err := cmd.Output()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(out) == 0 {

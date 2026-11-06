@@ -182,9 +182,10 @@ Run them in gh-auth:
   didn't change, so a series that only grew is a fast-forward. apply adds
   the rest with `git am` on the branch, as you would, which signs them if
   your git config says to. It checks that they come out exactly as the
-  patch you reviewed, and puts everything back if not. It leaves alone a
-  change to the branch that something else makes meanwhile, and says so.
-  Then it prints the push command.
+  patch you reviewed, and puts everything back if not, or if you press
+  Ctrl-C, e.g. at a passphrase prompt. It leaves alone a change to the
+  branch that something else makes meanwhile, and says so. Then it prints
+  the push command.
 - apply refuses if the worktree has uncommitted changes. It also refuses to
   drop commits that it didn't put on the branch, such as your own, unless
   you pass `--force`. It records the tip it set in

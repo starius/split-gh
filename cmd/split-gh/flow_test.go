@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -403,6 +404,73 @@ func TestFailedApplyKeepsOthersChanges(t *testing.T) {
 	}
 	if q.git(q.auth, wt, "symbolic-ref", "--short", "HEAD") != "fix-foo" || q.git(q.auth, wt, "status", "--porcelain") != "" {
 		t.Fatal("failed apply left the worktree elsewhere")
+	}
+}
+
+// Ctrl-C, say at a passphrase prompt, must not stop apply with the branch
+// moved: apply puts it back. Nor may Ctrl-C stop a git that moves the branch.
+func TestInterruptedApplyChangesNothing(t *testing.T) {
+	q := newQubes(t)
+	wt := filepath.Join(q.auth, "lnd/fix-foo")
+	q.commit("a.txt", "one\n", "Add a")
+	q.apply(q.send())
+	tip := q.authGit("rev-parse", "refs/heads/fix-foo")
+	// A rewrite into two commits: apply moves the branch back to the base,
+	// and git am signs twice.
+	q.git(q.ai, q.agent, "reset", "--quiet", "--hard", "HEAD^")
+	q.commit("a.txt", "uno\n", "Add a")
+	q.commit("b.txt", "dos\n", "Add b")
+	patchFile := q.send()
+	stopped := func(what, want, out string, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(out, want) || strings.Contains(out, "back failed") {
+			t.Fatalf("%s: %v\n%s", what, err, out)
+		}
+		if q.authGit("rev-parse", "refs/heads/fix-foo", "refs/split-gh/applied/fix-foo") != tip+"\n"+tip ||
+			q.git(q.auth, wt, "symbolic-ref", "--short", "HEAD") != "fix-foo" || q.git(q.auth, wt, "status", "--porcelain") != "" {
+			t.Fatalf("%s: apply didn't put the branch, its marker and the worktree back", what)
+		}
+	}
+	signer := func(script string) {
+		gpg := filepath.Join(t.TempDir(), "gpg")
+		write(t, gpg, "#!/bin/sh\n"+script)
+		if err := os.Chmod(gpg, 0755); err != nil {
+			t.Fatal(err)
+		}
+		q.authGit("config", "gpg.program", gpg)
+	}
+
+	// Ctrl-C at the second commit's passphrase prompt. The terminal sends
+	// SIGINT to its foreground process group: split-gh, and git am and the
+	// signing program, which must be in it to read the passphrase.
+	dir := t.TempDir()
+	signer("mkdir " + dir + "/signed 2>/dev/null && exec fake-gpg \"$@\"\n" +
+		"read -r _ _ _ _ pgrp _ < /proc/$$/stat\necho $pgrp > " + dir + "/pgrp\nkill -INT 0\nexit 1\n")
+	out, pgrp, err := q.job(patchFile)
+	stopped("Ctrl-C at signing", "signal: interrupt", out, err)
+	if b, _ := os.ReadFile(filepath.Join(dir, "pgrp")); strings.TrimSpace(string(b)) != strconv.Itoa(pgrp) {
+		t.Fatalf("the signing program ran in process group %q, not in split-gh's %d, where it could read the terminal", b, pgrp)
+	}
+
+	// Something else stops split-gh while git am runs, and git am finishes.
+	signer("read -r _ _ _ splitgh _ < /proc/$PPID/stat\nkill -TERM $splitgh\nexec fake-gpg \"$@\"\n")
+	out, _, err = q.job(patchFile)
+	stopped("SIGTERM during git am", "stopped: terminated", out, err)
+
+	// Ctrl-C while apply moves the branch: the git that moves it finishes,
+	// and apply moves it back, without going on to git am and a passphrase
+	// prompt.
+	signer("touch " + dir + "/asked\nexec fake-gpg \"$@\"\n")
+	out, _, err = q.job(patchFile, q.wrapGit("", "kill -INT -$PPID"))
+	stopped("Ctrl-C at update-ref", "stopped: interrupt", out, err)
+	if _, err := os.Stat(filepath.Join(dir, "asked")); err == nil {
+		t.Fatal("apply went on to sign after Ctrl-C")
+	}
+
+	q.authGit("config", "--unset", "gpg.program")
+	q.apply(patchFile)
+	if log := q.authGit("log", "--format=%s", "refs/heads/fix-foo"); log != "Add b\nAdd a\nInitial" {
+		t.Fatalf("apply after the stops: %q", log)
 	}
 }
 

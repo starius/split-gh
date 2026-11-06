@@ -14,8 +14,10 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"split-gh/internal/config"
 	"split-gh/internal/patch"
@@ -405,6 +407,13 @@ func (p *plan) apply(force bool) error {
 			"Or rerun with --force to drop them",
 			p.h.Branch, strings.Join(p.lost, "\n  "))
 	}
+	// From here on, Ctrl-C, a closed terminal or kill doesn't stop apply
+	// halfway, with the branch moved. Ctrl-C stops git am, if that is
+	// running; the rest of git runs in process groups of its own, which it
+	// doesn't reach, and finishes. Then apply puts everything back.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(stop)
 	start := p.h.Base
 	if p.keep > 0 {
 		start = p.old[p.keep-1].ID
@@ -443,7 +452,13 @@ func (p *plan) apply(force bool) error {
 		_, err = patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch)
 	}
 	if err == nil {
+		err = stopped(stop) // before git am asks for a passphrase
+	}
+	if err == nil {
 		err = p.commit()
+	}
+	if err == nil {
+		err = stopped(stop) // before the branch counts as applied
 	}
 	tip := p.refs[0]
 	if err == nil {
@@ -461,6 +476,16 @@ func (p *plan) apply(force bool) error {
 		fmt.Printf("Removed %s.\n", p.file)
 	}
 	return nil
+}
+
+// stopped returns an error if apply got a signal, such as Ctrl-C.
+func stopped(stop <-chan os.Signal) error {
+	select {
+	case s := <-stop:
+		return fmt.Errorf("stopped: %v", s)
+	default:
+		return nil
+	}
 }
 
 // commit adds the patches after the kept commits with git am, on the branch
@@ -485,12 +510,16 @@ func (p *plan) commit() error {
 		if err != nil {
 			return err
 		}
-		cmd.Stdin = os.Stdin // for a signing program that asks for a passphrase
+		// Unlike the rest of git, in the terminal's process group and with
+		// its input, for a signing program that asks for a passphrase. So
+		// Ctrl-C there stops git am.
+		cmd.SysProcAttr = nil
+		cmd.Stdin = os.Stdin
 		if out, err := cmd.CombinedOutput(); err != nil {
 			// This moves the branch back to start, unless something else
 			// moved it since git am did.
 			patch.Git(p.worktree, nil, "am", "--abort")
-			return fmt.Errorf("git am failed:\n%s", patch.Visible(string(out)))
+			return fmt.Errorf("git am failed: %v\n%s", err, patch.Visible(string(out)))
 		}
 		p.refs[0] = patch.Ref(p.worktree, "HEAD") // git am moved the branch
 	}
