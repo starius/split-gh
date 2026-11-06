@@ -365,7 +365,6 @@ func TestApplyRunsNoHooks(t *testing.T) {
 func TestApplyRefusesWorktreeAtHooks(t *testing.T) {
 	q := newQubes(t)
 	ran := filepath.Join(q.auth, "ran")
-	q.authGit("config", "core.hooksPath", ".githooks")
 	main := filepath.Join(q.ai, "lnd")
 	q.git(q.ai, main, "worktree", "move", "fix-foo", ".githooks")
 	q.agent = filepath.Join(main, ".githooks")
@@ -376,17 +375,55 @@ func TestApplyRefusesWorktreeAtHooks(t *testing.T) {
 	}
 	q.git(q.ai, q.agent, "add", "pre-push")
 	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Add a hook")
+	patchFile := q.send()
+	refused := func(what string) {
+		t.Helper()
+		out, err := q.splitgh(q.auth, "apply", patchFile)
+		if err == nil {
+			q.run(q.auth, q.auth, "sh", "-c", pushLine(t, out))
+			b, _ := os.ReadFile(ran)
+			t.Fatalf("%s: apply put the worktree at the hooks; the push ran:\n%s", what, b)
+		}
+		if !strings.Contains(out, "hook") || !strings.Contains(out, "worktree") {
+			t.Fatalf("%s: %v\n%s", what, err, out)
+		}
+		if _, err := os.Stat(filepath.Join(q.auth, "lnd/.githooks")); !os.IsNotExist(err) {
+			t.Fatalf("%s: apply made the worktree", what)
+		}
+	}
+	// The same directory, spelled in other ways. The symlink's target only
+	// exists once apply makes the worktree.
+	link := filepath.Join(q.auth, "hooks")
+	if err := os.Symlink("lnd/.githooks", link); err != nil {
+		t.Fatal(err)
+	}
+	for _, hooksPath := range []string{".githooks", q.auth + "/lnd/./.githooks", q.auth + "/lnd/.git/../.githooks", link} {
+		q.authGit("config", "core.hooksPath", hooksPath)
+		refused("core.hooksPath=" + hooksPath)
+	}
+	// A hook can be a symlink, such as one to the repository's own script.
+	q.authGit("config", "--unset", "core.hooksPath")
+	if err := os.Symlink("../../.githooks/pre-push", filepath.Join(q.auth, "lnd/.git/hooks/pre-push")); err != nil {
+		t.Fatal(err)
+	}
+	refused("a hook that is a symlink")
+	os.Remove(filepath.Join(q.auth, "lnd/.git/hooks/pre-push"))
+
+	// A worktree that apply made before core.hooksPath pointed there: apply
+	// refuses every patch while git in the main checkout would run its files.
+	q.apply(patchFile)
+	q.authGit("config", "core.hooksPath", ".githooks")
+	q.git(q.ai, main, "worktree", "add", "--quiet", "-b", "fix-bar", "fix-bar", "origin/master")
+	q.agent = filepath.Join(main, "fix-bar")
+	q.commit("a.txt", "one\n", "Add a")
 	out, err := q.splitgh(q.auth, "apply", q.send())
 	if err == nil {
 		q.run(q.auth, q.auth, "sh", "-c", pushLine(t, out))
 		b, _ := os.ReadFile(ran)
-		t.Fatalf("apply put the worktree at the hooks; the push ran:\n%s", b)
+		t.Fatalf("apply printed a push that runs the hooks in a worktree:\n%s", b)
 	}
-	if !strings.Contains(out, "core.hooksPath") {
+	if !strings.Contains(out, "lnd/.githooks") {
 		t.Fatalf("apply: %v\n%s", err, out)
-	}
-	if _, err := os.Stat(q.authGit("rev-parse", "--path-format=absolute", "--git-path", "hooks")); !os.IsNotExist(err) {
-		t.Fatal("apply made the hooks directory")
 	}
 }
 

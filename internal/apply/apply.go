@@ -24,19 +24,20 @@ import (
 const appliedRef = "refs/split-gh/applied/"
 
 type plan struct {
-	file     string
-	qube     string // the qube that sent the patch
-	h        patch.Header
-	patches  []string
-	repo     string // the repository's main checkout
-	worktree string
-	exists   bool   // the worktree exists
-	tip      string // the branch's commit, "" if there is no branch
-	applied  string // the tip apply last set, "" if none
-	old      []patch.Commit
-	oldTexts []string
-	keep     int      // leading commits of the branch that equal the patch's
-	lost     []string // commits on the branch whose change the patch doesn't have
+	file      string
+	qube      string // the qube that sent the patch
+	h         patch.Header
+	patches   []string
+	repo      string // the repository's main checkout
+	worktree  string
+	exists    bool     // the worktree exists
+	worktrees []string // the patch's worktree and the other linked worktrees, symlinks resolved
+	tip       string   // the branch's commit, "" if there is no branch
+	applied   string   // the tip apply last set, "" if none
+	old       []patch.Commit
+	oldTexts  []string
+	keep      int      // leading commits of the branch that equal the patch's
+	lost      []string // commits on the branch whose change the patch doesn't have
 }
 
 func load(file string) (*plan, error) {
@@ -167,11 +168,16 @@ func (p *plan) checkWorktree(real string) error {
 	return nil
 }
 
-// checkHooks refuses a worktree where git in the main checkout looks for
-// hooks. core.hooksPath can be relative to the main checkout, such as
-// .githooks: a worktree there would make the printed push, or a commit in
-// the main checkout, run the agent's files.
+// checkHooks refuses to apply while git in the main checkout would run a hook
+// from a worktree: this patch's, or one that apply made for an earlier patch.
+// A relative core.hooksPath such as .githooks names a directory of the main
+// checkout, where a worktree of that name would put the agent's files; so can
+// an absolute path or a symlink, and a hook can be a symlink too. The printed
+// push, or a commit in the main checkout, would then run the agent's files.
 func (p *plan) checkHooks(real string) error {
+	if err := p.listWorktrees(real); err != nil {
+		return err
+	}
 	// Not patch.Git, which sets core.hooksPath.
 	cmd := exec.Command("git", "rev-parse", "--git-path", "hooks")
 	cmd.Dir = p.repo
@@ -181,15 +187,97 @@ func (p *plan) checkHooks(real string) error {
 	}
 	hooks := strings.TrimSuffix(string(out), "\n")
 	if !filepath.IsAbs(hooks) {
-		hooks = filepath.Join(real, hooks)
+		hooks = p.repo + "/" + hooks // not filepath.Join, which drops ".." before symlinks are followed
 	}
-	for _, wt := range []string{p.worktree, filepath.Join(real, p.h.Worktree)} {
-		if hooks == wt || strings.HasPrefix(hooks, wt+"/") {
-			return fmt.Errorf("the worktree %s would hold %s, where git in %s looks for hooks (core.hooksPath): it would run the agent's files",
-				p.worktree, hooks, p.repo)
+	check := func(path, what string) error {
+		wt, err := p.worktreeOn(path)
+		if err != nil || wt == "" {
+			return err
+		}
+		return fmt.Errorf("git in %s %s, which leads into the worktree %s: git there, and the push that apply prints, would run the agent's files",
+			p.repo, what, wt)
+	}
+	if err := check(hooks, "looks for hooks in "+hooks+" (core.hooksPath)"); err != nil {
+		return err
+	}
+	entries, _ := os.ReadDir(hooks)
+	for _, e := range entries {
+		if err := check(hooks+"/"+e.Name(), "runs the hook "+hooks+"/"+e.Name()); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// listWorktrees sets p.worktrees to the directories that hold the agent's
+// files: the patch's worktree, which may not exist yet, and the repository's
+// other linked worktrees, which apply may have made for earlier patches.
+func (p *plan) listWorktrees(real string) error {
+	p.worktrees = []string{filepath.Join(real, p.h.Worktree)}
+	out, err := patch.Git(p.repo, nil, "worktree", "list", "--porcelain")
+	if err != nil {
+		return err
+	}
+	main := true
+	for _, line := range strings.Split(out, "\n") {
+		if wt, ok := strings.CutPrefix(line, "worktree "); ok {
+			if r, err := filepath.EvalSymlinks(wt); err == nil && !main {
+				p.worktrees = append(p.worktrees, r)
+			}
+			main = false
+		}
+	}
+	return nil
+}
+
+// worktreeOn returns the worktree that the kernel goes into on its way to
+// path, an absolute path, or "" if it doesn't.
+func (p *plan) worktreeOn(path string) (string, error) {
+	dirs, err := resolve(path)
+	if err != nil {
+		return "", err
+	}
+	for _, dir := range dirs {
+		for _, wt := range p.worktrees {
+			if dir == wt || strings.HasPrefix(dir, wt+"/") {
+				return wt, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// resolve follows path, an absolute path, as the kernel would, and returns
+// each place it goes through, ending with path's own, with symlinks followed.
+// What doesn't exist yet is taken as written: it may exist later.
+func resolve(path string) ([]string, error) {
+	var dirs []string
+	dir, parts := "/", strings.Split(path, "/")
+	for links := 0; len(parts) > 0; {
+		part := parts[0]
+		parts = parts[1:]
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			dir = filepath.Dir(dir)
+		default:
+			next := filepath.Join(dir, part)
+			if target, err := os.Readlink(next); err == nil {
+				if links++; links > 40 {
+					return nil, fmt.Errorf("%s: too many symlinks", path)
+				}
+				if filepath.IsAbs(target) {
+					dir = "/"
+				}
+				parts = append(strings.Split(target, "/"), parts...)
+				continue
+			}
+			dir = next
+		}
+		dirs = append(dirs, dir)
+	}
+	return dirs, nil
 }
 
 func revParse(dir string, args ...string) (string, error) {
