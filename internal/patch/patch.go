@@ -130,12 +130,15 @@ func Split(mbox string) ([]string, error) {
 	return patches, nil
 }
 
-// formatArgs pin every option that changes format-patch output.
+// formatArgs pin every option that changes format-patch output. Without
+// --ignore-submodules=none, the configuration, or a .gitmodules in the
+// checkout, can leave a submodule's new commit out of the patch.
 var formatArgs = []string{"format-patch", "--stdout", "--zero-commit", "--no-signature", "--keep-subject",
 	"--no-thread", "--no-cover-letter", "--no-to", "--no-cc", "--no-add-header", "--no-signoff", "--no-base",
 	"--no-notes", "--no-attach", "--encode-email-headers", "--full-index", "--no-color", "--no-ext-diff",
 	"--no-textconv", "-M", "--diff-algorithm=myers", "--indent-heuristic", "--unified=3",
-	"--src-prefix=a/", "--dst-prefix=b/", "--no-relative", "--inter-hunk-context=0", "-O/dev/null"}
+	"--src-prefix=a/", "--dst-prefix=b/", "--no-relative", "--inter-hunk-context=0", "-O/dev/null",
+	"--ignore-submodules=none"}
 
 // formatConfig pins the settings that change format-patch output and have
 // no option. With core.attributesFile, and the environment of formatEnv,

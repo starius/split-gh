@@ -559,6 +559,32 @@ func TestApplyRefusesRelativeSigner(t *testing.T) {
 	q.apply(patchFile)
 }
 
+// A submodule's new commit is part of the change. Settings such as
+// diff.ignoreSubmodules hide it from format-patch, and then from the patch.
+func TestApplyKeepsSubmoduleChanges(t *testing.T) {
+	q := newQubes(t)
+	q.git(q.ai, filepath.Join(q.ai, "lnd"), "config", "diff.ignoreSubmodules", "all")
+	write(t, filepath.Join(q.agent, ".gitmodules"), "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n")
+	if err := os.Mkdir(filepath.Join(q.agent, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	q.git(q.ai, q.agent, "add", ".gitmodules")
+	q.git(q.ai, q.agent, "update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("1", 40)+",sub")
+	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Add a submodule")
+	q.apply(q.send())
+	write(t, filepath.Join(q.agent, "a.txt"), "uses the new submodule\n")
+	q.git(q.ai, q.agent, "add", "a.txt")
+	q.git(q.ai, q.agent, "update-index", "--cacheinfo", "160000,"+strings.Repeat("2", 40)+",sub")
+	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Update the submodule")
+	q.apply(q.send())
+	for _, rev := range []string{"HEAD~1", "HEAD"} {
+		want := q.git(q.ai, q.agent, "rev-parse", rev+"^{tree}")
+		if got := q.authGit("rev-parse", "refs/heads/fix-foo"+strings.TrimPrefix(rev, "HEAD")+"^{tree}"); got != want {
+			t.Fatalf("%s: the tree in gh-auth differs from the agent's:\n%s", rev, q.authGit("ls-tree", "refs/heads/fix-foo"))
+		}
+	}
+}
+
 // When apply goes back to an older commit, git would overwrite an ignored
 // file of the user's that the older commit tracks.
 func TestApplyKeepsIgnoredFiles(t *testing.T) {

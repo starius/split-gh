@@ -135,14 +135,22 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 	write("moved.txt", strings.Repeat("moved\n", 20))
 	write("caf\xc3\xa9.txt", "one\n")
 	write("z.txt", "z\n")
+	gitmodules := "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n"
+	write(".gitmodules", gitmodules)
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	git("add", ".")
+	git("update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("1", 40)+",sub")
 	git("commit", "--quiet", "-m", "Base")
-	// Two hunks 9 lines apart, next to blank lines; a rename; a non-ASCII name.
+	// Two hunks 9 lines apart, next to blank lines; a rename; a non-ASCII
+	// name; a submodule's new commit.
 	lines[11], lines[21] = "changed 11", "changed 21"
 	write("a.txt", strings.Join(lines, "\n")+"\n")
 	git("mv", "moved.txt", "renamed.txt")
 	write("caf\xc3\xa9.txt", "two\n")
 	write("z.txt", "zz\n")
+	git("update-index", "--cacheinfo", "160000,"+strings.Repeat("2", 40)+",sub")
 	git("commit", "--quiet", "-am", "Change things")
 	format := func() string {
 		t.Helper()
@@ -165,6 +173,7 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 		{"format.numbered", "true"}, {"format.subjectPrefix", "X"}, {"format.signOff", "true"},
 		{"format.headers", "X-A: b"}, {"format.noprefix", "true"}, {"format.encodeEmailHeaders", "false"},
 		{"format.signature", "sig"}, {"format.useAutoBase", "true"}, {"format.mboxrd", "true"},
+		{"diff.ignoreSubmodules", "all"}, {"submodule.sub.ignore", "all"}, {"diff.submodule", "log"},
 	} {
 		git("config", setting[0], setting[1])
 		if got := format(); got != want {
@@ -172,6 +181,15 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 		}
 		git("config", "--unset-all", setting[0])
 	}
+	if !strings.Contains(want, "+Subproject commit 2222") {
+		t.Errorf("the submodule's change is missing:\n%s", want)
+	}
+	// git reads .gitmodules from the checkout, which is the agent's.
+	write(".gitmodules", gitmodules+"\tignore = all\n")
+	if got := format(); got != want {
+		t.Errorf(".gitmodules with ignore = all changes the text:\n%s", got)
+	}
+	write(".gitmodules", gitmodules)
 
 	// Attributes in the checkout too, where git reads them from; old git
 	// can't be told to ignore them.
