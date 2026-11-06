@@ -44,6 +44,12 @@ sudo install -m 755 split-gh /usr/local/bin/split-gh
 install -d -m 700 ~/.config/split-gh
 ```
 
+With Nix, `nix build` builds it instead, as `result/bin/split-gh`, with
+the Go of the nixpkgs commit that `flake.nix` names; check that
+`flake.lock` pins the same commit of `NixOS/nixpkgs`. Install
+`result/bin/split-gh` as above. `nix flake check` runs the tests too, in
+Nix's build sandbox, without network or your home directory.
+
 Create `~/.config/split-gh/config.json`:
 
 ```json
@@ -126,6 +132,9 @@ ln -sfn split-gh ~/.local/bin/gh
 ln -sfn split-gh ~/.local/bin/git-remote-split-gh
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+With Nix, build it with `nix build` and copy `result/bin/split-gh` to
+`~/.local/bin` instead.
 
 Add the PATH setting to the shell's startup file, and check that `command -v gh`
 prints the symlink. Then put the password in place:
