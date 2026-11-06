@@ -655,6 +655,37 @@ func TestApplyKeepsSubmoduleChanges(t *testing.T) {
 	}
 }
 
+// With submodule.recurse, git switch also checks out submodules, by running
+// git in them. apply's switches must not: they would act on the submodule
+// commit that the agent picked, in a worktree whose submodules aren't set up.
+func TestApplyStaysOutOfSubmodules(t *testing.T) {
+	q := newQubes(t)
+	sub := filepath.Join(t.TempDir(), "sub")
+	q.git(q.auth, "", "init", "--quiet", sub)
+	q.git(q.auth, sub, "commit", "--quiet", "--allow-empty", "-m", "One")
+	q.git(q.auth, sub, "commit", "--quiet", "--allow-empty", "-m", "Two")
+	two := q.git(q.auth, sub, "rev-parse", "HEAD")
+	q.authGit("-c", "protocol.file.allow=always", "submodule", "--quiet", "add", sub, "sub")
+	q.git(q.auth, filepath.Join(q.auth, "lnd/sub"), "checkout", "--quiet", "HEAD~1")
+	q.authGit("add", "sub")
+	q.authGit("commit", "--quiet", "-m", "Add a submodule")
+	q.authGit("push", "--quiet", "origin", "master")
+	q.authGit("config", "submodule.recurse", "true")
+	main := filepath.Join(q.ai, "lnd")
+	q.git(q.ai, main, "fetch", "--quiet", "origin")
+	q.git(q.ai, q.agent, "reset", "--quiet", "--hard", "origin/master")
+	q.git(q.ai, q.agent, "update-index", "--cacheinfo", "160000,"+two+",sub")
+	q.git(q.ai, q.agent, "commit", "--quiet", "-m", "Update the submodule")
+	q.apply(q.send())
+	// A rewrite: apply switches the worktree back to the base, where the
+	// submodule is at its first commit.
+	q.git(q.ai, q.agent, "commit", "--quiet", "--amend", "-m", "Update the submodule, reworded")
+	q.apply(q.send())
+	if got := q.authGit("rev-parse", "refs/heads/fix-foo:sub"); got != two {
+		t.Fatalf("sub is at %s", got)
+	}
+}
+
 // When apply goes back to an older commit, git would overwrite an ignored
 // file of the user's that the older commit tracks.
 func TestApplyKeepsIgnoredFiles(t *testing.T) {

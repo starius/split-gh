@@ -413,7 +413,7 @@ func (p *plan) apply(force bool) error {
 		if out, err := patch.Git(p.worktree, nil, "status", "--porcelain", "--untracked-files=no"); err != nil || out != "" {
 			return fmt.Errorf("%s has uncommitted changes; commit or stash them first", p.worktree)
 		}
-		if _, err := patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--detach", start); err != nil {
+		if _, err := patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", "--detach", start); err != nil {
 			return err
 		}
 	} else {
@@ -435,7 +435,7 @@ func (p *plan) apply(force bool) error {
 	}
 	if err == nil {
 		// HEAD is at tip already, so this only attaches it to the branch.
-		if _, err = patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", p.h.Branch); err != nil {
+		if _, err = patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch); err != nil {
 			if undo := p.setRefs([2]string{tip, tip}, [2]string{p.tip, p.applied}); undo != nil {
 				err = fmt.Errorf("%v\nMoving %s back failed too: %v", err, p.h.Branch, undo)
 			}
@@ -444,7 +444,7 @@ func (p *plan) apply(force bool) error {
 	if err != nil {
 		// Put the worktree back. The branch hasn't moved.
 		if p.exists {
-			patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", p.h.Branch)
+			patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch)
 		} else {
 			patch.Git(p.repo, nil, "worktree", "remove", "--force", p.worktree)
 		}
