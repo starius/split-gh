@@ -153,7 +153,7 @@ var formatConfig = []string{"-c", "diff.suppressBlankEmpty=false", "-c", "core.q
 
 // AmArgs apply patches exactly as written, whatever the user's configuration.
 // A patch that `git am` would still change is caught by comparing the result.
-var AmArgs = []string{"am", "--quiet", "--keep", "--keep-cr", "--no-3way",
+var AmArgs = []string{"am", "--keep", "--keep-cr", "--no-3way",
 	"--no-message-id", "--no-scissors", "--whitespace=nowarn"}
 
 // Format returns each commit's patch text, in the order given. The text is

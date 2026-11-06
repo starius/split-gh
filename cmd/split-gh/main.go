@@ -1,6 +1,6 @@
 // Command split-gh gives agents in an untrusted qube read access to GitHub
 // through the authenticated qube, and hands their commits over as patch
-// files for the user to review, sign and push.
+// files for the user to review, apply with git am, and push.
 package main
 
 import (
@@ -22,7 +22,8 @@ const usage = `usage:
     split-gh serve               answer the agent qubes until Ctrl-C
     split-gh diff PATCH          compare the branch with a patch from the agent
     split-gh apply [--force] PATCH
-                                 sign the patch's commits onto the branch`
+                                 prepare the branch, and print the git am
+                                 that adds the patch's commits`
 
 func main() {
 	if filepath.Base(os.Args[0]) == "gh" {
