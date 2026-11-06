@@ -117,7 +117,7 @@ func send(baseRev string) error {
 	if err != nil {
 		return err
 	}
-	if err := roundTrip(top, h.Base, texts); err != nil {
+	if err := roundTrip(top, h.Base, commits, texts); err != nil {
 		return err
 	}
 
@@ -144,8 +144,10 @@ func send(baseRev string) error {
 }
 
 // roundTrip applies the patches on base in a temporary worktree and checks
-// they come out unchanged, so that apply in gh-auth will reproduce them.
-func roundTrip(dir, base string, texts []string) error {
+// that they rebuild the commits: each one's tree, and its text when formatted
+// again. So the patches leave nothing of the commits out, and apply in
+// gh-auth will reproduce them.
+func roundTrip(dir, base string, commits []patch.Commit, texts []string) error {
 	tmp, err := os.MkdirTemp("", "split-gh-check-")
 	if err != nil {
 		return err
@@ -164,21 +166,42 @@ func roundTrip(dir, base string, texts []string) error {
 	if _, err := patch.Git(wt, env, append(append([]string{}, patch.AmArgs...), "--no-gpg-sign", mbox)...); err != nil {
 		return fmt.Errorf("the patch doesn't apply with git am: %v", err)
 	}
-	commits, err := patch.Range(wt, base, "HEAD")
+	replayed, err := patch.Range(wt, base, "HEAD")
 	if err != nil {
 		return err
 	}
-	got, err := patch.Format(wt, patch.IDs(commits))
+	got, err := patch.Format(wt, patch.IDs(replayed))
 	if err != nil {
 		return err
 	}
 	if len(got) != len(texts) {
 		return fmt.Errorf("git am made %d commits from %d patches; a commit message probably has a line that starts a mail or a diff", len(got), len(texts))
 	}
+	trees, err := run(dir, append([]string{"rev-parse"}, treesOf(commits)...)...)
+	if err != nil {
+		return err
+	}
+	replayedTrees, err := run(dir, append([]string{"rev-parse"}, treesOf(replayed)...)...)
+	if err != nil {
+		return err
+	}
+	want, have := strings.Fields(trees), strings.Fields(replayedTrees)
 	for i := range texts {
+		if have[i] != want[i] {
+			return fmt.Errorf("commit %d (%s) has changes that its patch leaves out", i+1, patch.Subject(texts[i]))
+		}
 		if got[i] != texts[i] {
 			return fmt.Errorf("commit %d (%s) changes when applied with git am. A line \"---\" or \"diff ...\" in its message ends the message there; reword it", i+1, patch.Subject(texts[i]))
 		}
 	}
 	return nil
+}
+
+// treesOf names the commits' trees, for git rev-parse.
+func treesOf(commits []patch.Commit) []string {
+	names := make([]string, len(commits))
+	for i, c := range commits {
+		names[i] = c.ID + "^{tree}"
+	}
+	return names
 }
