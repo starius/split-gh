@@ -132,11 +132,13 @@ func Split(mbox string) ([]string, error) {
 
 // formatArgs pin every option that changes format-patch output. Without
 // --ignore-submodules=none, the configuration, or a .gitmodules in the
-// checkout, can leave a submodule's new commit out of the patch.
+// checkout, can leave a submodule's new commit out of the patch. -l1000 is
+// git's default rename limit, which diff.renameLimit changes: past the limit,
+// a renamed file that also changed shows as a deletion and an addition.
 var formatArgs = []string{"format-patch", "--stdout", "--zero-commit", "--no-signature", "--keep-subject",
 	"--no-thread", "--no-cover-letter", "--no-to", "--no-cc", "--no-add-header", "--no-signoff", "--no-base",
 	"--no-notes", "--no-attach", "--encode-email-headers", "--full-index", "--no-color", "--no-ext-diff",
-	"--no-textconv", "-M", "--diff-algorithm=myers", "--indent-heuristic", "--unified=3",
+	"--no-textconv", "-M", "-l1000", "--diff-algorithm=myers", "--indent-heuristic", "--unified=3",
 	"--src-prefix=a/", "--dst-prefix=b/", "--no-relative", "--inter-hunk-context=0", "-O/dev/null",
 	"--ignore-submodules=none"}
 

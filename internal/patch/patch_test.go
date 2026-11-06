@@ -135,6 +135,9 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 	write("moved.txt", strings.Repeat("moved\n", 20))
 	write("caf\xc3\xa9.txt", "one\n")
 	write("z.txt", "z\n")
+	for _, name := range []string{"m1.txt", "m2.txt"} {
+		write(name, strings.Repeat(name+"\n", 20))
+	}
 	gitmodules := "[submodule \"sub\"]\n\tpath = sub\n\turl = ./sub\n"
 	write(".gitmodules", gitmodules)
 	if err := os.Mkdir(filepath.Join(dir, "sub"), 0755); err != nil {
@@ -143,11 +146,15 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 	git("add", ".")
 	git("update-index", "--add", "--cacheinfo", "160000,"+strings.Repeat("1", 40)+",sub")
 	git("commit", "--quiet", "-m", "Base")
-	// Two hunks 9 lines apart, next to blank lines; a rename; a non-ASCII
-	// name; a submodule's new commit.
+	// Two hunks 9 lines apart, next to blank lines; renames, two of them
+	// with changes; a non-ASCII name; a submodule's new commit.
 	lines[11], lines[21] = "changed 11", "changed 21"
 	write("a.txt", strings.Join(lines, "\n")+"\n")
 	git("mv", "moved.txt", "renamed.txt")
+	for _, name := range []string{"m1.txt", "m2.txt"} {
+		git("mv", name, "n"+name[1:])
+		write("n"+name[1:], strings.Repeat(name+"\n", 19)+"changed\n")
+	}
 	write("caf\xc3\xa9.txt", "two\n")
 	write("z.txt", "zz\n")
 	git("update-index", "--cacheinfo", "160000,"+strings.Repeat("2", 40)+",sub")
@@ -174,6 +181,7 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 		{"format.headers", "X-A: b"}, {"format.noprefix", "true"}, {"format.encodeEmailHeaders", "false"},
 		{"format.signature", "sig"}, {"format.useAutoBase", "true"}, {"format.mboxrd", "true"},
 		{"diff.ignoreSubmodules", "all"}, {"submodule.sub.ignore", "all"}, {"diff.submodule", "log"},
+		{"diff.renameLimit", "1"},
 	} {
 		git("config", setting[0], setting[1])
 		if got := format(); got != want {
@@ -181,8 +189,8 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 		}
 		git("config", "--unset-all", setting[0])
 	}
-	if !strings.Contains(want, "+Subproject commit 2222") {
-		t.Errorf("the submodule's change is missing:\n%s", want)
+	if !strings.Contains(want, "+Subproject commit 2222") || strings.Count(want, "\nrename from ") != 3 {
+		t.Errorf("the submodule's change or a rename is missing:\n%s", want)
 	}
 	// git reads .gitmodules from the checkout, which is the agent's.
 	write(".gitmodules", gitmodules+"\tignore = all\n")
