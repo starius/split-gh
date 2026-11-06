@@ -40,9 +40,8 @@ type plan struct {
 	applied   string   // the tip apply last set, "" if none
 	old       []patch.Commit
 	oldTexts  []string
-	keep      int       // leading commits of the branch that equal the patch's
-	lost      []string  // commits on the branch whose change the patch doesn't have
-	refs      [2]string // the branch and its marker, as apply last left them
+	keep      int      // leading commits of the branch that equal the patch's
+	lost      []string // commits on the branch whose change the patch doesn't have
 }
 
 func load(file string) (*plan, error) {
@@ -408,9 +407,9 @@ func (p *plan) apply(force bool) error {
 			p.h.Branch, strings.Join(p.lost, "\n  "))
 	}
 	// From here on, Ctrl-C, a closed terminal or kill doesn't stop apply
-	// halfway, with the branch moved. Ctrl-C stops git am, if that is
-	// running; the rest of git runs in process groups of its own, which it
-	// doesn't reach, and finishes. Then apply puts everything back.
+	// halfway. Ctrl-C stops git am, if that is running; the rest of git runs
+	// in process groups of its own, which it doesn't reach, and finishes.
+	// Then apply puts the worktree back.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(stop)
@@ -441,28 +440,29 @@ func (p *plan) apply(force bool) error {
 			return err
 		}
 	}
-	// git am commits on the branch, as when you run it yourself, so that
-	// settings for the branch apply too, such as an includeIf "onbranch:"
-	// that turns on signing. So the branch and its marker move to start
-	// first, and restore puts them back if anything fails.
-	p.refs = [2]string{p.tip, p.applied}
-	err := p.setRefs([2]string{start, start})
+	// git am commits on the worktree's HEAD, detached, as git rebase does.
+	// The branch moves once, after the check, from the tip that apply read:
+	// if anything else moved it meanwhile, it stays where that put it. Until
+	// then, a failure leaves only the worktree to put back. git am doesn't
+	// see config for the branch, such as an includeIf "onbranch:".
+	err := stopped(stop) // before git am asks for a passphrase
+	var tip string
 	if err == nil {
-		// HEAD is at start already, so this only attaches it to the branch.
-		_, err = patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch)
+		tip, err = p.commit()
 	}
 	if err == nil {
-		err = stopped(stop) // before git am asks for a passphrase
+		err = stopped(stop) // before the branch moves
 	}
 	if err == nil {
-		err = p.commit()
+		err = p.setRefs([2]string{p.tip, p.applied}, [2]string{tip, tip})
 	}
 	if err == nil {
-		err = stopped(stop) // before the branch counts as applied
-	}
-	tip := p.refs[0]
-	if err == nil {
-		err = p.setRefs([2]string{tip, tip})
+		// HEAD is at tip already, so this only attaches it to the branch.
+		if _, err = patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch); err != nil {
+			if undo := p.setRefs([2]string{tip, tip}, [2]string{p.tip, p.applied}); undo != nil {
+				err = fmt.Errorf("%v\nMoving %s back failed too: %v", err, p.h.Branch, undo)
+			}
+		}
 	}
 	if err != nil {
 		return p.restore(err)
@@ -488,15 +488,15 @@ func stopped(stop <-chan os.Signal) error {
 	}
 }
 
-// commit adds the patches after the kept commits with git am, on the branch
-// in the worktree. git am signs them if your git config says to, as when you
-// run it yourself. Then commit checks that each of the branch's commits
-// formats to exactly its patch.
-func (p *plan) commit() error {
+// commit adds the patches after the kept commits with git am, on the
+// worktree's detached HEAD. git am signs them if your git config says to, as
+// when you run it yourself. Then commit checks that each commit from the base
+// formats to exactly its patch, and returns the new tip.
+func (p *plan) commit() (string, error) {
 	if rest := p.patches[p.keep:]; len(rest) > 0 {
 		f, err := os.CreateTemp("", "split-gh-*.mbox")
 		if err != nil {
-			return err
+			return "", err
 		}
 		defer os.Remove(f.Name())
 		_, err = f.WriteString(strings.Join(rest, ""))
@@ -504,11 +504,11 @@ func (p *plan) commit() error {
 			err = err2
 		}
 		if err != nil {
-			return err
+			return "", err
 		}
 		cmd, err := patch.Command(p.worktree, append(append([]string{}, patch.AmArgs...), f.Name())...)
 		if err != nil {
-			return err
+			return "", err
 		}
 		// Unlike the rest of git, in the terminal's process group and with
 		// its input, for a signing program that asks for a passphrase. So
@@ -516,45 +516,37 @@ func (p *plan) commit() error {
 		cmd.SysProcAttr = nil
 		cmd.Stdin = os.Stdin
 		if out, err := cmd.CombinedOutput(); err != nil {
-			// This moves the branch back to start, unless something else
-			// moved it since git am did.
+			// Ends git am's session, if it left one, so that the worktree
+			// can go back to the branch.
 			patch.Git(p.worktree, nil, "am", "--abort")
-			return fmt.Errorf("git am failed: %v\n%s", err, patch.Visible(string(out)))
+			return "", fmt.Errorf("git am failed: %v\n%s", err, patch.Visible(string(out)))
 		}
-		p.refs[0] = patch.Ref(p.worktree, "HEAD") // git am moved the branch
 	}
-	commits, err := patch.Range(p.worktree, p.h.Base, p.refs[0])
+	// Detached, HEAD is the worktree's own: it is where git am left it.
+	tip := patch.Ref(p.worktree, "HEAD")
+	commits, err := patch.Range(p.worktree, p.h.Base, tip)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !patch.Linear(p.h.Base, commits) || len(commits) != len(p.patches) {
-		return errors.New("git am did not make one commit per patch")
+		return "", errors.New("git am did not make one commit per patch")
 	}
 	texts, err := patch.Format(p.worktree, patch.IDs(commits))
 	if err != nil {
-		return err
+		return "", err
 	}
 	for i := range texts {
 		if patch.Key(texts[i]) != patch.Key(p.patches[i]) {
-			return fmt.Errorf("patch %d (%s) came out different after git am", i+1, patch.Subject(p.patches[i]))
+			return "", fmt.Errorf("patch %d (%s) came out different after git am", i+1, patch.Subject(p.patches[i]))
 		}
 	}
-	return nil
+	return tip, nil
 }
 
-// restore puts the branch, its marker and the worktree back as they were,
-// after apply failed with err, and returns err. It moves the refs only from
-// where apply left them, so it doesn't undo a change that something else
-// made meanwhile. A worktree that apply made is removed.
+// restore puts the worktree back on the branch, or removes it if apply made
+// it, after apply failed with err, and returns err. By then the branch and
+// its marker are where they were.
 func (p *plan) restore(err error) error {
-	// Detached, the worktree stays where it is while the branch moves.
-	patch.Git(p.worktree, nil, "switch", "--quiet", "--no-recurse-submodules", "--detach")
-	// Only if apply moved them: setRefs can't keep a missing ref missing.
-	if was := [2]string{p.tip, p.applied}; p.refs != was {
-		if undo := p.setRefs(was); undo != nil {
-			err = fmt.Errorf("%v\nMoving %s back failed too: %v", err, p.h.Branch, undo)
-		}
-	}
 	if p.exists {
 		patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch)
 	} else {
@@ -563,13 +555,13 @@ func (p *plan) restore(err error) error {
 	return err
 }
 
-// setRefs moves the branch and its applied marker to the values in to, in one
-// transaction: both move or neither does, and only if both are where apply
-// last left them, p.refs. "" is a ref that doesn't exist.
-func (p *plan) setRefs(to [2]string) error {
+// setRefs moves the branch and its applied marker from the values in from to
+// the values in to, in one transaction: both move or neither does, and only
+// if both are still at from. "" is a ref that doesn't exist.
+func (p *plan) setRefs(from, to [2]string) error {
 	var script strings.Builder
 	for i, ref := range []string{"refs/heads/" + p.h.Branch, appliedRef + p.h.Branch} {
-		old := p.refs[i]
+		old := from[i]
 		if old == "" {
 			old = strings.Repeat("0", len(p.h.Base))
 		}
@@ -587,7 +579,6 @@ func (p *plan) setRefs(to [2]string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git update-ref: %s", patch.Visible(strings.TrimSpace(string(out))))
 	}
-	p.refs = to
 	return nil
 }
 

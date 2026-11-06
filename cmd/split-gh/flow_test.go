@@ -169,10 +169,10 @@ func (q *qubes) job(patchFile string, env ...string) (string, int, error) {
 }
 
 // wrapGit puts a git in front of the real one, which is "$real" in it, and
-// returns the PATH setting for split-gh to use it. Around the first git
-// update-ref of split-gh apply, the one that moves the branch first, it runs
-// the shell commands before and after.
-func (q *qubes) wrapGit(before, after string) string {
+// returns the PATH setting for split-gh to use it. The first time split-gh
+// runs a git whose arguments contain match, the wrapper runs the shell
+// commands before and after around it.
+func (q *qubes) wrapGit(match, before, after string) string {
 	q.t.Helper()
 	real, err := exec.LookPath("git")
 	if err != nil {
@@ -180,7 +180,7 @@ func (q *qubes) wrapGit(before, after string) string {
 	}
 	dir := q.t.TempDir()
 	write(q.t, filepath.Join(dir, "git"), "#!/bin/sh\nreal="+real+"\n"+
-		"case \"$*\" in *'update-ref -m split-gh apply --stdin'*)\n"+
+		"case \"$*\" in *'"+match+"'*)\n"+
 		"\tif mkdir "+dir+"/once 2>/dev/null; then\n"+
 		"\t\t"+before+"\n\t\t\"$real\" \"$@\"; s=$?\n\t\t"+after+"\n\t\texit $s\n\tfi;;\nesac\n"+
 		"exec \"$real\" \"$@\"\n")
@@ -366,8 +366,8 @@ func TestFailedApplyChangesNothing(t *testing.T) {
 	tip := q.authGit("rev-parse", "refs/heads/fix-foo")
 
 	// A rewrite whose patch adds a file that is untracked in the worktree.
-	// apply moves the branch back to the base, then git am stops: the branch,
-	// its marker and the worktree go back.
+	// git am stops, on the base, and the worktree goes back to the branch,
+	// which hasn't moved, nor has its marker.
 	write(t, filepath.Join(userWT, "b.txt"), "untracked\n")
 	write(t, filepath.Join(q.agent, "b.txt"), "two\n")
 	q.git(q.ai, q.agent, "add", "b.txt")
@@ -386,7 +386,7 @@ func TestFailedApplyChangesNothing(t *testing.T) {
 }
 
 // When something else moves the branch while apply runs, apply stops, and
-// putting things back must not undo that move.
+// the branch stays where that put it.
 func TestFailedApplyKeepsOthersChanges(t *testing.T) {
 	q := newQubes(t)
 	wt := filepath.Join(q.auth, "lnd/fix-foo")
@@ -395,28 +395,62 @@ func TestFailedApplyKeepsOthersChanges(t *testing.T) {
 	tip := q.authGit("rev-parse", "refs/heads/fix-foo")
 	other := q.authGit("commit-tree", "-p", tip, "-m", "Someone else's", tip+"^{tree}")
 	q.commit("b.txt", "two\n", "Add b")
-	path := q.wrapGit(`"$real" -C `+filepath.Join(q.auth, "lnd")+` update-ref refs/heads/fix-foo `+other, "")
-	if out, _, err := q.job(q.send(), path); err == nil || !strings.Contains(out, "is at "+other) || strings.Contains(out, "back failed") {
+	path := q.wrapGit("update-ref -m split-gh apply --stdin",
+		`"$real" -C `+filepath.Join(q.auth, "lnd")+` update-ref refs/heads/fix-foo `+other, "")
+	patchFile := q.send()
+	if out, _, err := q.job(patchFile, path); err == nil || !strings.Contains(out, "is at "+other) || strings.Contains(out, "back failed") {
 		t.Fatalf("apply: %v\n%s", err, out)
 	}
+	os.Remove(patchFile)
 	if q.authGit("rev-parse", "refs/heads/fix-foo", "refs/split-gh/applied/fix-foo") != other+"\n"+tip {
 		t.Fatal("failed apply undid the other move of the branch, or moved its marker")
 	}
 	if q.git(q.auth, wt, "symbolic-ref", "--short", "HEAD") != "fix-foo" || q.git(q.auth, wt, "status", "--porcelain") != "" {
 		t.Fatal("failed apply left the worktree elsewhere")
 	}
+
+	// A commit that something else adds to the branch just before git am
+	// starts, or just after it ends: when the patch fails the check, here
+	// with a forged author, and when it passes, so that apply would move the
+	// branch.
+	q.commit("c.txt", "three\n", "Add c")
+	patchFile = q.send()
+	b, _ := os.ReadFile(patchFile)
+	good, forged := string(b), strings.Replace(string(b), "Subject: Add c\n\n", "Subject: Add c\n\nFrom: Evil <evil@ai>\n\n", 1)
+	repo, dir := filepath.Join(q.auth, "lnd"), t.TempDir()
+	add := `x=$("$real" -C ` + repo + ` rev-parse fix-foo) && o=$("$real" -C ` + repo + ` commit-tree -p $x -m Later $x^{tree}) && ` +
+		`"$real" -C ` + repo + ` update-ref refs/heads/fix-foo $o && echo $o > ` + dir + `/later`
+	for _, c := range []struct{ patch, before, after, want string }{
+		{forged, add, "", "came out different"},
+		{forged, "", add, "came out different"},
+		{good, add, "", "but expected"},
+	} {
+		q.authGit("update-ref", "refs/heads/fix-foo", tip)
+		write(t, patchFile, c.patch)
+		out, _, err := q.job(patchFile, q.wrapGit("am --quiet --keep", c.before, c.after))
+		if err == nil || !strings.Contains(out, c.want) || strings.Contains(out, "back failed") {
+			t.Fatalf("apply: %v\n%s", err, out)
+		}
+		later, _ := os.ReadFile(filepath.Join(dir, "later"))
+		if q.authGit("rev-parse", "refs/heads/fix-foo", "refs/split-gh/applied/fix-foo") != strings.TrimSpace(string(later))+"\n"+tip {
+			t.Fatalf("apply (%s) dropped the commit added to the branch around git am, or moved its marker", c.want)
+		}
+		if q.git(q.auth, wt, "symbolic-ref", "--short", "HEAD") != "fix-foo" || q.git(q.auth, wt, "status", "--porcelain") != "" {
+			t.Fatal("failed apply left the worktree elsewhere")
+		}
+	}
 }
 
-// Ctrl-C, say at a passphrase prompt, must not stop apply with the branch
-// moved: apply puts it back. Nor may Ctrl-C stop a git that moves the branch.
+// Ctrl-C, say at a passphrase prompt, stops apply cleanly: the branch hasn't
+// moved, and apply puts the worktree back. Nor does Ctrl-C stop halfway a git
+// that apply runs, other than git am.
 func TestInterruptedApplyChangesNothing(t *testing.T) {
 	q := newQubes(t)
 	wt := filepath.Join(q.auth, "lnd/fix-foo")
 	q.commit("a.txt", "one\n", "Add a")
 	q.apply(q.send())
 	tip := q.authGit("rev-parse", "refs/heads/fix-foo")
-	// A rewrite into two commits: apply moves the branch back to the base,
-	// and git am signs twice.
+	// A rewrite into two commits, which git am signs on the base.
 	q.git(q.ai, q.agent, "reset", "--quiet", "--hard", "HEAD^")
 	q.commit("a.txt", "uno\n", "Add a")
 	q.commit("b.txt", "dos\n", "Add b")
@@ -457,17 +491,23 @@ func TestInterruptedApplyChangesNothing(t *testing.T) {
 	out, _, err = q.job(patchFile)
 	stopped("SIGTERM during git am", "stopped: terminated", out, err)
 
-	// Ctrl-C while apply moves the branch: the git that moves it finishes,
-	// and apply moves it back, without going on to git am and a passphrase
-	// prompt.
+	// Ctrl-C while apply moves the worktree to the base: that git finishes,
+	// and apply puts the worktree back, without going on to git am and a
+	// passphrase prompt.
 	signer("touch " + dir + "/asked\nexec fake-gpg \"$@\"\n")
-	out, _, err = q.job(patchFile, q.wrapGit("", "kill -INT -$PPID"))
-	stopped("Ctrl-C at update-ref", "stopped: interrupt", out, err)
+	out, _, err = q.job(patchFile, q.wrapGit("switch --quiet --no-overwrite-ignore --no-recurse-submodules --detach", "", "kill -INT -$PPID"))
+	stopped("Ctrl-C at the switch to the base", "stopped: interrupt", out, err)
 	if _, err := os.Stat(filepath.Join(dir, "asked")); err == nil {
 		t.Fatal("apply went on to sign after Ctrl-C")
 	}
-
 	q.authGit("config", "--unset", "gpg.program")
+
+	// Ctrl-C once git am has made every commit and removed its own record of
+	// them, as during its automatic maintenance, so git am --abort finds
+	// nothing to undo.
+	out, _, err = q.job(patchFile, q.wrapGit("am --quiet --keep", "", "kill -INT -$PPID"))
+	stopped("Ctrl-C after git am's commits", "signal: interrupt", out, err)
+
 	q.apply(patchFile)
 	if log := q.authGit("log", "--format=%s", "refs/heads/fix-foo"); log != "Add b\nAdd a\nInitial" {
 		t.Fatalf("apply after the stops: %q", log)
@@ -710,8 +750,7 @@ func TestApplyRunsNoFiltersOfNewWorktrees(t *testing.T) {
 }
 
 // split-gh doesn't sign: git am does, if your git config says to. The harness
-// sets commit.gpgSign. git am runs on the branch, as when you run it, so an
-// includeIf "onbranch:" applies too.
+// sets commit.gpgSign.
 func TestApplySignsOnlyIfConfigured(t *testing.T) {
 	q := newQubes(t)
 	signed := func() bool {
@@ -727,14 +766,6 @@ func TestApplySignsOnlyIfConfigured(t *testing.T) {
 	q.apply(q.send())
 	if signed() {
 		t.Fatal("commit.gpgSign is off, but the commit is signed")
-	}
-	include := filepath.Join(q.auth, "sign.gitconfig")
-	write(t, include, "[commit]\n\tgpgSign = true\n")
-	q.authGit("config", "includeIf.onbranch:fix-foo.path", include)
-	q.commit("c.txt", "three\n", "Add c")
-	q.apply(q.send())
-	if !signed() {
-		t.Fatal("commit.gpgSign is set for the branch, but the commit is not signed")
 	}
 }
 
