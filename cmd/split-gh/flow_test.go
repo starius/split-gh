@@ -306,11 +306,11 @@ func TestFailedApplyChangesNothing(t *testing.T) {
 	patchFile := q.send()
 	failed := func(what, want string) {
 		t.Helper()
-		if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, want) {
+		if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, want) || strings.Contains(out, "back failed") {
 			t.Fatalf("%s: %v\n%s", what, err, out)
 		}
-		if _, err := os.Stat(userWT); !os.IsNotExist(err) || q.authGit("branch", "--list", "fix-foo") != "" {
-			t.Fatalf("%s: failed apply left a worktree or branch", what)
+		if _, err := os.Stat(userWT); !os.IsNotExist(err) || q.authGit("for-each-ref", "refs/heads/fix-foo", "refs/split-gh/") != "" {
+			t.Fatalf("%s: failed apply left a worktree, branch or marker", what)
 		}
 	}
 	q.authGit("config", "gpg.program", "false")
@@ -325,14 +325,20 @@ func TestFailedApplyChangesNothing(t *testing.T) {
 	q.apply(patchFile)
 	tip := q.authGit("rev-parse", "refs/heads/fix-foo")
 
-	// An untracked file in the way of the next patch: everything stays put.
+	// A rewrite whose patch adds a file that is untracked in the worktree.
+	// apply moves the branch back to the base, then git am stops: the branch,
+	// its marker and the worktree go back.
 	write(t, filepath.Join(userWT, "b.txt"), "untracked\n")
-	q.commit("b.txt", "two\n", "Add b")
+	write(t, filepath.Join(q.agent, "b.txt"), "two\n")
+	q.git(q.ai, q.agent, "add", "b.txt")
+	q.git(q.ai, q.agent, "commit", "--quiet", "--amend", "-m", "Add a and b")
 	if out, err := q.splitgh(q.auth, "apply", q.send()); err == nil || !strings.Contains(out, "git am failed") {
 		t.Fatalf("apply over an untracked file: %v\n%s", err, out)
 	}
-	if q.authGit("rev-parse", "refs/heads/fix-foo") != tip || q.git(q.auth, userWT, "symbolic-ref", "--short", "HEAD") != "fix-foo" {
-		t.Fatal("failed apply moved the branch or left the worktree detached")
+	if q.authGit("rev-parse", "refs/heads/fix-foo", "refs/split-gh/applied/fix-foo") != tip+"\n"+tip ||
+		q.git(q.auth, userWT, "symbolic-ref", "--short", "HEAD") != "fix-foo" ||
+		q.git(q.auth, userWT, "status", "--porcelain", "--untracked-files=no") != "" {
+		t.Fatal("failed apply moved the branch or its marker, or left the worktree elsewhere")
 	}
 	if b, _ := os.ReadFile(filepath.Join(userWT, "b.txt")); string(b) != "untracked\n" {
 		t.Fatalf("untracked file changed: %q", b)
@@ -498,7 +504,7 @@ func TestApplyMovesBranchAndMarkerTogether(t *testing.T) {
 	q.agent = filepath.Join(main, "bar")
 	q.commit("b.txt", "two\n", "Add b")
 	patchFile := q.send()
-	if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, "refs/split-gh/applied/fix-foo") {
+	if out, err := q.splitgh(q.auth, "apply", patchFile); err == nil || !strings.Contains(out, "refs/split-gh/applied/fix-foo") || strings.Contains(out, "back failed") {
 		t.Fatalf("apply: %v\n%s", err, out)
 	}
 	if q.authGit("branch", "--list", "fix-foo/bar") != "" {
@@ -575,7 +581,8 @@ func TestApplyRunsNoFiltersOfNewWorktrees(t *testing.T) {
 }
 
 // split-gh doesn't sign: git am does, if your git config says to. The harness
-// sets commit.gpgSign.
+// sets commit.gpgSign. git am runs on the branch, as when you run it, so an
+// includeIf "onbranch:" applies too.
 func TestApplySignsOnlyIfConfigured(t *testing.T) {
 	q := newQubes(t)
 	signed := func() bool {
@@ -591,6 +598,14 @@ func TestApplySignsOnlyIfConfigured(t *testing.T) {
 	q.apply(q.send())
 	if signed() {
 		t.Fatal("commit.gpgSign is off, but the commit is signed")
+	}
+	include := filepath.Join(q.auth, "sign.gitconfig")
+	write(t, include, "[commit]\n\tgpgSign = true\n")
+	q.authGit("config", "includeIf.onbranch:fix-foo.path", include)
+	q.commit("c.txt", "three\n", "Add c")
+	q.apply(q.send())
+	if !signed() {
+		t.Fatal("commit.gpgSign is set for the branch, but the commit is not signed")
 	}
 }
 

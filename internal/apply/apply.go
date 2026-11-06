@@ -431,26 +431,24 @@ func (p *plan) apply(force bool) error {
 			return err
 		}
 	}
-	tip, err := p.commit()
+	// git am commits on the branch, as when you run it yourself, so that
+	// settings for the branch apply too, such as an includeIf "onbranch:"
+	// that turns on signing. So the branch and its marker move to start
+	// first, and restore puts them back if anything fails.
+	var tip string
+	err := p.setRefs([2]string{p.tip, p.applied}, [2]string{start, start})
 	if err == nil {
-		err = p.setRefs([2]string{p.tip, p.applied}, [2]string{tip, tip})
+		// HEAD is at start already, so this only attaches it to the branch.
+		_, err = patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch)
 	}
 	if err == nil {
-		// HEAD is at tip already, so this only attaches it to the branch.
-		if _, err = patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch); err != nil {
-			if undo := p.setRefs([2]string{tip, tip}, [2]string{p.tip, p.applied}); undo != nil {
-				err = fmt.Errorf("%v\nMoving %s back failed too: %v", err, p.h.Branch, undo)
-			}
-		}
+		tip, err = p.commit()
+	}
+	if err == nil {
+		err = p.setRefs([2]string{tip, start}, [2]string{tip, tip})
 	}
 	if err != nil {
-		// Put the worktree back. The branch hasn't moved.
-		if p.exists {
-			patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch)
-		} else {
-			patch.Git(p.repo, nil, "worktree", "remove", "--force", p.worktree)
-		}
-		return err
+		return p.restore(err)
 	}
 	fmt.Printf("%s is now at %s: %d commits on %s, %d kept and %d added with git am.\n",
 		p.h.Branch, tip[:12], len(p.patches), p.h.Base[:12], p.keep, len(p.patches)-p.keep)
@@ -463,8 +461,8 @@ func (p *plan) apply(force bool) error {
 	return nil
 }
 
-// commit adds the patches after the kept commits with git am, on the
-// worktree's HEAD. git am signs them if your git config says to, as when you
+// commit adds the patches after the kept commits with git am, on the branch
+// in the worktree. git am signs them if your git config says to, as when you
 // run it yourself. Then commit checks that each of the branch's commits
 // formats to exactly its patch, and returns the new tip.
 func (p *plan) commit() (string, error) {
@@ -509,6 +507,27 @@ func (p *plan) commit() (string, error) {
 		}
 	}
 	return tip, nil
+}
+
+// restore puts the branch, its marker and the worktree back as they were,
+// after apply failed with err, and returns err. A worktree that apply made
+// is removed.
+func (p *plan) restore(err error) error {
+	// Detached, the worktree stays where it is while the branch moves.
+	patch.Git(p.worktree, nil, "switch", "--quiet", "--no-recurse-submodules", "--detach")
+	// Only if they moved: setRefs can't keep a missing ref missing.
+	was := [2]string{p.tip, p.applied}
+	if now := [2]string{patch.Ref(p.repo, "refs/heads/"+p.h.Branch), patch.Ref(p.repo, appliedRef+p.h.Branch)}; now != was {
+		if undo := p.setRefs(now, was); undo != nil {
+			err = fmt.Errorf("%v\nMoving %s back failed too: %v", err, p.h.Branch, undo)
+		}
+	}
+	if p.exists {
+		patch.Git(p.worktree, nil, "switch", "--quiet", "--no-overwrite-ignore", "--no-recurse-submodules", p.h.Branch)
+	} else {
+		patch.Git(p.repo, nil, "worktree", "remove", "--force", p.worktree)
+	}
+	return err
 }
 
 // setRefs moves the branch and its applied marker from the values in from to

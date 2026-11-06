@@ -180,9 +180,10 @@ Run them in gh-auth:
 - `split-gh apply` puts the worktree at the same path, `~/lnd/fix-foo`, on
   the branch, creating them if needed. The branch keeps the commits that
   didn't change, so a series that only grew is a fast-forward. apply adds
-  the rest with `git am`, which signs them if your git config says to, and
-  checks that they come out exactly as the patch you reviewed. Then it
-  prints the push command.
+  the rest with `git am` on the branch, as you would, which signs them if
+  your git config says to. It checks that they come out exactly as the
+  patch you reviewed, and puts everything back if not. Then it prints the
+  push command.
 - apply refuses if the worktree has uncommitted changes. It also refuses to
   drop commits that it didn't put on the branch, such as your own, unless
   you pass `--force`. It records the tip it set in
