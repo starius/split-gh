@@ -158,7 +158,8 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 	write("caf\xc3\xa9.txt", "two\n")
 	write("z.txt", "zz\n")
 	git("update-index", "--cacheinfo", "160000,"+strings.Repeat("2", 40)+",sub")
-	git("commit", "--quiet", "-am", "Change things")
+	// As in gh-auth, where the agent is the author and you the committer.
+	git("commit", "--quiet", "--author=Agent <a@ai>", "-am", "Change things\n\nCaf\xc3\xa9.")
 	format := func() string {
 		t.Helper()
 		texts, err := Format(dir, []string{"HEAD"})
@@ -181,7 +182,8 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 		{"format.headers", "X-A: b"}, {"format.noprefix", "true"}, {"format.encodeEmailHeaders", "false"},
 		{"format.signature", "sig"}, {"format.useAutoBase", "true"}, {"format.mboxrd", "true"},
 		{"diff.ignoreSubmodules", "all"}, {"submodule.sub.ignore", "all"}, {"diff.submodule", "log"},
-		{"diff.renameLimit", "1"},
+		{"diff.renameLimit", "1"}, {"format.from", "X <x@y>"}, {"core.bigFileThreshold", "100"},
+		{"i18n.logOutputEncoding", "ISO-8859-1"}, {"i18n.commitEncoding", "ISO-8859-1"},
 	} {
 		git("config", setting[0], setting[1])
 		if got := format(); got != want {
@@ -192,6 +194,12 @@ func TestFormatIgnoresRepositorySettings(t *testing.T) {
 	if !strings.Contains(want, "+Subproject commit 2222") || strings.Count(want, "\nrename from ") != 3 {
 		t.Errorf("the submodule's change or a rename is missing:\n%s", want)
 	}
+	// git takes the number of context lines from the environment too.
+	t.Setenv("GIT_DIFF_OPTS", "-u10")
+	if got := format(); got != want {
+		t.Errorf("GIT_DIFF_OPTS=-u10 changes the text:\n%s", got)
+	}
+	os.Unsetenv("GIT_DIFF_OPTS")
 	// git reads .gitmodules from the checkout, which is the agent's.
 	write(".gitmodules", gitmodules+"\tignore = all\n")
 	if got := format(); got != want {

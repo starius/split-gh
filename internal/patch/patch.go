@@ -140,14 +140,16 @@ var formatArgs = []string{"format-patch", "--stdout", "--zero-commit", "--no-sig
 	"--no-notes", "--no-attach", "--encode-email-headers", "--full-index", "--no-color", "--no-ext-diff",
 	"--no-textconv", "-M", "-l1000", "--diff-algorithm=myers", "--indent-heuristic", "--unified=3",
 	"--src-prefix=a/", "--dst-prefix=b/", "--no-relative", "--inter-hunk-context=0", "-O/dev/null",
-	"--ignore-submodules=none"}
+	"--ignore-submodules=none", "--no-from"}
 
 // formatConfig pins the settings that change format-patch output and have
-// no option. With core.attributesFile, and the environment of formatEnv,
-// attributes don't count either, such as -diff or a diff driver's function
-// names: only $GIT_DIR/info/attributes still does.
+// no option. core.bigFileThreshold makes larger files binary, and
+// i18n.logOutputEncoding, or i18n.commitEncoding, re-encodes messages. With
+// core.attributesFile, and the environment of formatEnv, attributes don't
+// count either, such as -diff or a diff driver's function names: only
+// $GIT_DIR/info/attributes still does.
 var formatConfig = []string{"-c", "diff.suppressBlankEmpty=false", "-c", "core.quotePath=true",
-	"-c", "core.attributesFile=/dev/null"}
+	"-c", "core.attributesFile=/dev/null", "-c", "core.bigFileThreshold=512m", "-c", "i18n.logOutputEncoding=UTF-8"}
 
 // AmArgs apply patches exactly as written, whatever the user's configuration.
 // A patch that `git am` would still change is caught by comparing the result.
@@ -177,9 +179,10 @@ func Format(dir string, commits []string) ([]string, error) {
 // configuration, and the system attributes, /etc/gitattributes; the pinned
 // options and settings cover the repository's. GIT_ATTR_SOURCE, from git
 // 2.40, reads attributes from the empty tree instead of the checkout.
+// GIT_DIFF_OPTS, when set, would override --unified.
 func formatEnv(emptyTree string) []string {
 	return append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
-		"GIT_ATTR_NOSYSTEM=1", "GIT_ATTR_SOURCE="+emptyTree)
+		"GIT_ATTR_NOSYSTEM=1", "GIT_ATTR_SOURCE="+emptyTree, "GIT_DIFF_OPTS=")
 }
 
 // Key is the text two patches are compared by. It drops the compressed data
