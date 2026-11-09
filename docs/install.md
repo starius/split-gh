@@ -1,5 +1,10 @@
 # Install and use split-gh
 
+For a first setup, start with the [README](../README.md), which includes a
+step-by-step guide, separate read and push qubes, and troubleshooting for token
+access, shell PATH, forks, and missing remote branches. This page provides the
+detailed behavior and acceptance tests.
+
 The examples use `ai` for the agent qube and `gh-auth` for the authenticated
 qube. Each repository has the same path in both, e.g. `~/lnd`. Replace the
 names with yours. Run each command in the qube its section names.
