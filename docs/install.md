@@ -239,6 +239,7 @@ apply prints, for example:
 
 ```text
 fix-foo is now at 4b5a44b552a7: 2 commits on 2f1493310abc, 1 kept and 1 added with git am.
+Worktree: /home/user/lnd/fix-foo
 Push it yourself:
   cd /home/user/lnd && git push origin refs/heads/fix-foo:refs/heads/fix-foo
 Removed /home/user/QubesIncoming/ai/lnd-fix-foo-1a2b3c4.patch.

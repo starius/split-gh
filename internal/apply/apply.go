@@ -469,6 +469,7 @@ func (p *plan) apply(force bool) error {
 	}
 	fmt.Printf("%s is now at %s: %d commits on %s, %d kept and %d added with git am.\n",
 		p.h.Branch, tip[:12], len(p.patches), p.h.Base[:12], p.keep, len(p.patches)-p.keep)
+	fmt.Printf("Worktree: %s\n", p.worktree)
 	// From the main checkout: in the worktree, with a relative
 	// core.hooksPath, git push would run the agent's pre-push hook.
 	fmt.Printf("Push it yourself:\n  cd %s && %s\n", quote(p.repo), p.pushCommand(tip))

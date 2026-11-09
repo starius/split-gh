@@ -346,8 +346,10 @@ split-gh diff ~/QubesIncoming/agent/project-feature-branch-abcdef0.patch
 split-gh apply ~/QubesIncoming/agent/project-feature-branch-abcdef0.patch
 ```
 
-Review before applying. Apply reproduces the worktree and prints a push command
-to run from the main checkout. If the base commit is missing, fetch in the
+Review before applying. Apply reproduces the worktree, prints its full path,
+and prints a push command to run from the main checkout. Push from the main
+checkout because a relative hooks path could run agent-controlled hooks in the
+received worktree. If the base commit is missing, fetch in the
 receiver and retry. Run builds and tests in `agent`; files in the received
 worktree are agent-controlled. See [patch handling and signing](docs/install.md#sending-commits)
 for signing, history restrictions, and rollback behavior.

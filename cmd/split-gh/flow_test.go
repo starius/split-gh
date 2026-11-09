@@ -197,6 +197,9 @@ func TestSendApplyFlow(t *testing.T) {
 	// First send creates the worktree and branch, with signed commits.
 	q.commit("a.txt", "one\n", "Add a")
 	out := q.apply(q.send())
+	if !strings.Contains(out, "Worktree: "+filepath.Join(q.auth, "lnd/fix-foo")+"\n") {
+		t.Fatalf("no worktree path:\n%s", out)
+	}
 	if !strings.Contains(out, "git push origin refs/heads/fix-foo:refs/heads/fix-foo\n") {
 		t.Fatalf("no push command:\n%s", out)
 	}
