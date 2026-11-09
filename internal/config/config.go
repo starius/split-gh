@@ -22,7 +22,8 @@ type Qube struct {
 	// PasswordFile holds the password the qube sends with every request.
 	PasswordFile string `json:"password_file"`
 	// ReadRepos are the GitHub OWNER/REPO patterns the qube may read, with
-	// gh and with git fetch.
+	// gh and with git fetch. */REPO matches that name under any owner,
+	// regardless of fork ancestry.
 	ReadRepos []string `json:"read_repos"`
 	// LocalRepos are repositories in gh-auth, relative to the home directory
 	// ("lnd" or "~/lnd"), that the qube may send patches for.

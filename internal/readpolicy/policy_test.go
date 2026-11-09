@@ -6,6 +6,42 @@ import (
 	"testing"
 )
 
+func TestRepositoryNameWildcard(t *testing.T) {
+	patterns := []string{"*/project"}
+	for _, tc := range []struct {
+		repo string
+		want bool
+	}{
+		{"example/project", true},
+		{"contributor/project", true},
+		{"Other/PROJECT", true},
+		{"example/project-extra", false},
+		{"example/other", false},
+		{"example/nested/project", false},
+		{"/project", false},
+		{"../project", false},
+	} {
+		if got := Allowed(tc.repo, patterns); got != tc.want {
+			t.Errorf("Allowed(%q, %v) = %v, want %v", tc.repo, patterns, got, tc.want)
+		}
+	}
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"pr", "list", "-R", "contributor/project"}, true},
+		{[]string{"api", "repos/contributor/project/pulls"}, true},
+		{[]string{"api", "repos/contributor/other/pulls"}, false},
+		{[]string{"search", "issues", "bug", "--repo=contributor/project"}, true},
+		{[]string{"search", "issues", "bug", "--owner=contributor"}, false},
+	} {
+		_, err := Parse(tc.args, "contributor/project", "main", patterns)
+		if (err == nil) != tc.want {
+			t.Errorf("Parse(%v): %v, want allowed=%v", tc.args, err, tc.want)
+		}
+	}
+}
+
 func TestPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		args []string

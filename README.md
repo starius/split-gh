@@ -88,6 +88,14 @@ patches. If patches go to a separate `source` qube, omit `local_repos` here and
 configure it there in step 6. Repository patterns such as `example/*` are also
 supported. Adding a repository here does not grant the GitHub token access to it.
 
+To cover the same repository name across owners, use `"read_repos":
+["*/project"]`. This matches `example/project`, `contributor/project`, and any
+other owner's repository named `project`, case-insensitively. It matches by name,
+not GitHub fork ancestry: unrelated repositories with that name are included,
+and forks renamed to something else need another entry. The pattern applies to
+both `gh` reads and Git fetches. It does not permit owner-wide searches or grant
+the token additional access. Restart serve after changing the allowlist.
+
 Create a client password and send it to `agent`:
 
 ```sh
@@ -305,7 +313,8 @@ git push origin feature-branch
 
 Then fetch again in `agent`. For a private fork, allowlist the fork's
 `contributor/project` name as well as the upstream repository, and ensure the
-token can read it. The upstream's allowlist entry does not cover forks.
+token can read it. Alternatively, `*/project` covers both owners. An exact
+upstream allowlist entry does not cover forks.
 
 For a PR branch, you can instead fetch by PR number from the repository holding
 the PR:

@@ -80,7 +80,11 @@ Create `~/.config/split-gh/config.json`:
 - `read_repos` are the GitHub repositories `ai` may read, with `gh` and with
   `git fetch`, as `OWNER/REPO` patterns. git in `ai` fetches other
   repositories from GitHub itself, without a token, so public ones need no
-  entry.
+  entry. `*/project` allows a repository named `project` under any owner,
+  case-insensitively, including forks with that name. This also includes
+  unrelated repositories with the same name; renamed forks need another entry.
+  It does not grant owner-wide search access or expand the token's permissions.
+  Restart serve after changing these patterns.
 - `local_repos` are the repositories in gh-auth, relative to your home
   directory, that `ai` may send patches for.
 
