@@ -25,6 +25,9 @@ type Qube struct {
 	// gh and with git fetch. */REPO matches that name under any owner,
 	// regardless of fork ancestry.
 	ReadRepos []string `json:"read_repos"`
+	// ReadProjects are OWNER/NUMBER patterns for GitHub Projects, independent
+	// of repository access (for example "example/12" or "example/*").
+	ReadProjects []string `json:"read_projects"`
 	// LocalRepos are repositories in gh-auth, relative to the home directory
 	// ("lnd" or "~/lnd"), that the qube may send patches for.
 	LocalRepos []string `json:"local_repos"`

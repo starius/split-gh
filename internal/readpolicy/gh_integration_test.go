@@ -202,6 +202,9 @@ func TestRealGHAcceptsAllowedFlags(t *testing.T) {
 	dir := t.TempDir()
 	values := map[string]string{"state": "open", "author": "alice", "assignee": "alice", "base": "main", "head": "topic", "label": "bug", "limit": "10", "search": "bug", "json": "number", "template": "{{.}}", "color": "never", "interval": "10", "milestone": "v1", "mention": "alice", "branch": "main", "commit": "abcdef", "event": "push", "status": "success", "user": "alice", "workflow": "ci.yml", "job": "1", "attempt": "1", "ref": "main", "repo": "o/r", "owner": "o", "sort": "created", "order": "asc", "committer": "alice", "filename": "file", "extension": "go", "language": "go"}
 	for command, flags := range commands {
+		if command == "project view" {
+			continue // Separate project allowlist and CLI test below.
+		}
 		t.Run(command, func(t *testing.T) {
 			var allOptions []string
 			for _, flag := range strings.Split(flags, ",") {
@@ -273,6 +276,29 @@ func TestRealGHAcceptsAllowedFlags(t *testing.T) {
 				t.Errorf("all flags %v: expected auth exit 4, got %v: %s", canonical, err, out)
 			}
 		})
+	}
+}
+
+func TestRealGHAcceptsProjectView(t *testing.T) {
+	gh, err := exec.LookPath("gh")
+	if err != nil {
+		t.Skip("gh is not installed")
+	}
+	dir := t.TempDir()
+	for _, options := range [][]string{nil, {"--format=json"}, {"--format=json", "--template={{.title}}"}} {
+		args := append([]string{"project", "view", "12", "--owner=example"}, options...)
+		canonical, err := ParseProjectView(args, []string{"example/12"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		cmd := exec.CommandContext(ctx, gh, canonical...)
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "GH_CONFIG_DIR=" + dir, "GH_PROMPT_DISABLED=1", "HTTPS_PROXY=http://127.0.0.1:1", "NO_PROXY="}
+		out, err := cmd.CombinedOutput()
+		cancel()
+		if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 4 {
+			t.Errorf("%v: expected auth exit 4, got %v: %s", canonical, err, out)
+		}
 	}
 }
 

@@ -10,6 +10,10 @@ The user reviews, signs and pushes every change from gh-auth.
   with no arguments explains the rest. Commands that write, such as
   `gh pr create`, `gh pr comment` or `gh api -X POST`, are refused. Don't try
   to work around that: write a draft for the user instead.
+- **View projects with `gh project view N --owner OWNER`.** The user must allow
+  the project in `read_projects`, separately from repositories. `--format json`,
+  `--template`, and local `--jq` work. Specify the actual owner and project
+  number; `@me`, interactive selection, `--web`, and project writes are refused.
 - **Clone and fetch with git as usual.** `git clone` and `git fetch` from
   GitHub go through gh-auth for the repositories the user allows, private
   ones included, and straight to GitHub for other public repositories.

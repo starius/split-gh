@@ -60,6 +60,29 @@ func TestReadIntegration(t *testing.T) {
 	}
 }
 
+func TestProjectViewIntegration(t *testing.T) {
+	fakeGH(t, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+	entry := qubeJSON("ai", 8401, "o/*")
+	entry = strings.TrimSuffix(entry, "}") + `,"read_projects":["example/12"]}`
+	d := newTestDaemon(t, "{"+entry+"}")
+	defer d.close()
+	for _, tc := range []struct {
+		args   []string
+		status int
+	}{
+		{[]string{"project", "view", "12", "--owner=example", "--format=json"}, 200},
+		{[]string{"project", "view", "13", "--owner=example"}, 403},
+		{[]string{"project", "view", "12", "--owner=other"}, 403},
+		{[]string{"project", "edit", "12", "--owner=example"}, 403},
+		{[]string{"project", "view", "12", "--owner=example", "--jq=env.GH_TOKEN"}, 403},
+	} {
+		a := d.gh(t, "ai", wire.Request{Argv: tc.args})
+		if a.status != tc.status || tc.status == 200 && (a.code != 0 || !strings.Contains(a.stdout, "--owner=example") || strings.Contains(a.stdout, "--repo")) {
+			t.Errorf("%v: %+v", tc.args, a)
+		}
+	}
+}
+
 func TestStreamOutputLimit(t *testing.T) {
 	var out bytes.Buffer
 	cancelled := false

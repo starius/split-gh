@@ -70,6 +70,8 @@ func (q *qube) serveGH(w http.ResponseWriter, r *http.Request) {
 	normalized, err := readpolicy.NormalizeGlobal(req.Argv)
 	if err == nil && len(normalized) >= 2 && normalized[0] == "pr" && normalized[1] == "threads" {
 		threadNumber, err = parseThreadArgs(normalized[2:], req.Repo, q.conf.ReadRepos)
+	} else if err == nil && len(normalized) >= 2 && normalized[0] == "project" && normalized[1] == "view" {
+		args, err = readpolicy.ParseProjectView(normalized, q.conf.ReadProjects)
 	} else if err == nil {
 		args, err = readpolicy.Parse(req.Argv, req.Repo, req.Branch, q.conf.ReadRepos)
 	}

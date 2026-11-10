@@ -64,6 +64,7 @@ Create `~/.config/split-gh/config.json`:
       "port": 8401,
       "password_file": "~/.config/split-gh/ai.password",
       "read_repos": ["example/*"],
+      "read_projects": ["example/12"],
       "local_repos": ["lnd"]
     }
   },
@@ -87,6 +88,12 @@ Create `~/.config/split-gh/config.json`:
   Restart serve after changing these patterns.
 - `local_repos` are the repositories in gh-auth, relative to your home
   directory, that `ai` may send patches for.
+- `read_projects` independently allows GitHub Projects as `OWNER/NUMBER`
+  patterns, such as `example/12` or `example/*`. Run `gh project view 12
+  --owner example`, optionally with `--format json`, `--template`, or client-side
+  `--jq`. Both owner and number are required; `@me` and `--web` are refused.
+  The token must also have project read access. Repository grants do not allow
+  projects, and project grants do not allow repositories.
 
 Make the password and send a copy to `ai`:
 

@@ -109,6 +109,19 @@ func TestShimSendsRequest(t *testing.T) {
 	}
 }
 
+func TestProjectViewWithoutCheckout(t *testing.T) {
+	f := newFakeServe(t)
+	t.Setenv("GH_REPO", "")
+	t.Setenv("PATH", t.TempDir())
+	if code := Main([]string{"project", "view", "12", "--owner=example", "--format=json"}); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	q := f.last(t)
+	if q.Repo != "" || strings.Join(q.Argv, " ") != "project view 12 --owner=example --format=json" {
+		t.Fatalf("unexpected request: %+v", q)
+	}
+}
+
 // stderrOf runs f and returns what it wrote to stderr.
 func stderrOf(t *testing.T, f func()) string {
 	t.Helper()

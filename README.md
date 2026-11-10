@@ -75,6 +75,7 @@ Create `~/.config/split-gh/config.json`:
       "port": 8401,
       "password_file": "~/.config/split-gh/agent.password",
       "read_repos": ["example/project", "contributor/project"],
+      "read_projects": ["example/12"],
       "local_repos": ["project"]
     }
   },
@@ -266,6 +267,28 @@ For nested checkouts, use the same home-relative path, such as `projects/project
 in both qubes and in `local_repos`.
 
 ## Everyday use
+
+### View a GitHub Project
+
+Projects use the separate `read_projects` allowlist: `example/12` permits project
+12 owned by `example`, and `example/*` permits all that owner's projects.
+Repository permissions in `read_repos` do not grant project access. Add the
+entries in `github`'s config and restart serve, then run in `agent`:
+
+```sh
+gh project view 12 --owner example
+gh project view 12 --owner example --format json --jq '.title'
+```
+
+Specify both the project number and actual owner; interactive selection, `@me`,
+and `--web` are not supported. No checkout is required. `--format json` and
+`--template` are supported; `--jq` runs locally in the agent qube. Project writes
+remain refused. See the [GitHub CLI command reference](https://cli.github.com/manual/gh_project_view).
+
+The token file must also have project read access. For a classic token, this is
+the [`read:project` scope](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).
+Test the exact token with the real `gh project view` in `github` as in step 2,
+and restart serve if you replace the token file.
 
 ### Clone or update a checkout
 

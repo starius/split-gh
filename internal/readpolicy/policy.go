@@ -62,6 +62,7 @@ func allowedOwner(owner string, patterns []string) bool {
 }
 
 var commands = map[string]string{
+	"project view": "owner,format,jq,template",
 	"pr view": "comments,json,jq,template", "pr list": "state,author,assignee,base,head,label,limit,search,draft,json,jq,template", "pr diff": "name-only,patch,color", "pr checks": "json,jq,template,required,watch,interval,fail-fast", "issue view": "comments,json,jq,template", "issue list": "state,author,assignee,label,limit,search,milestone,mention,json,jq,template", "repo view": "json,jq,template", "label list": "limit,search,json,jq,template", "release list": "limit,exclude-drafts,exclude-pre-releases,json,jq,template", "release view": "json,jq,template", "run list": "branch,commit,event,limit,status,user,workflow,json,jq,template", "run view": "log,log-failed,job,attempt,exit-status,json,jq,template,verbose", "workflow list": "all,limit,json,jq,template", "workflow view": "ref,yaml", "search issues": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search prs": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search commits": "repo,owner,limit,sort,order,author,committer,json,jq,template", "search code": "repo,owner,limit,filename,extension,language,json,jq,template",
 }
 var bools = map[string]bool{"comments": true, "name-only": true, "patch": true, "draft": true, "required": true, "watch": true, "fail-fast": true, "log": true, "log-failed": true, "exit-status": true, "verbose": true, "all": true, "yaml": true, "exclude-drafts": true, "exclude-pre-releases": true}
@@ -143,6 +144,9 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 	}
 	if len(argv) < 1 {
 		return nil, errors.New("missing command")
+	}
+	if len(argv) >= 2 && argv[0] == "project" && argv[1] == "view" {
+		return ParseProjectView(argv, nil)
 	}
 	api := argv[0] == "api"
 	key := "api"
