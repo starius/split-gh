@@ -268,7 +268,7 @@ in both qubes and in `local_repos`.
 
 ## Everyday use
 
-### View a GitHub Project
+### Read GitHub Projects
 
 Projects use the separate `read_projects` allowlist: `example/12` permits project
 12 owned by `example`, and `example/*` permits all that owner's projects.
@@ -278,12 +278,28 @@ entries in `github`'s config and restart serve, then run in `agent`:
 ```sh
 gh project view 12 --owner example
 gh project view 12 --owner example --format json --jq '.title'
+gh project item-list 12 --owner example --limit 50 --format json
+gh project field-list 12 --owner example --format json
 ```
 
-Specify both the project number and actual owner; interactive selection, `@me`,
-and `--web` are not supported. No checkout is required. `--format json` and
+To list an owner's projects, grant `example/*` in `read_projects`, then run:
+
+```sh
+gh project list --owner example --closed --limit 50
+```
+
+`gh project ls` is an alias for `list`. A grant for a single project does not
+permit listing all projects. `item-list` also accepts `--query`, repeated
+`--field`, and repeated `--field-id` options; availability depends on the real
+GitHub CLI version in `github`. `--limit` (or `-L`) works on all three list
+commands. Reading items grants access to the project's contents, including
+drafts and linked items, independently of `read_repos`.
+
+Specify the actual owner and, except for `list`, the project number. Interactive
+selection, `@me`, and `--web` are not supported. No checkout is required. `--format json` and
 `--template` are supported; `--jq` runs locally in the agent qube. Project writes
-remain refused. See the [GitHub CLI command reference](https://cli.github.com/manual/gh_project_view).
+remain refused. These are all four read commands in the
+[GitHub CLI project command reference](https://cli.github.com/manual/gh_project).
 
 The token file must also have project read access. For a classic token, this is
 the [`read:project` scope](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps).

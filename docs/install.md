@@ -89,9 +89,13 @@ Create `~/.config/split-gh/config.json`:
 - `local_repos` are the repositories in gh-auth, relative to your home
   directory, that `ai` may send patches for.
 - `read_projects` independently allows GitHub Projects as `OWNER/NUMBER`
-  patterns, such as `example/12` or `example/*`. Run `gh project view 12
-  --owner example`, optionally with `--format json`, `--template`, or client-side
-  `--jq`. Both owner and number are required; `@me` and `--web` are refused.
+  patterns, such as `example/12` or `example/*`. Commands `gh project view`,
+  `item-list`, and `field-list` require a number and `--owner`. `gh project list`
+  (alias `ls`) requires `--owner` and an owner-wide grant such as `example/*`.
+  All accept `--format json`, `--template`, and client-side `--jq`. List commands
+  accept `--limit`/`-L`; `item-list` also accepts `--query` and repeated `--field`
+  and `--field-id`. These flags require a sufficiently recent real gh.
+  `@me` and `--web` are refused.
   The token must also have project read access. Repository grants do not allow
   projects, and project grants do not allow repositories.
 

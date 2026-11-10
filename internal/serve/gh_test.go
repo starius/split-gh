@@ -71,7 +71,11 @@ func TestProjectViewIntegration(t *testing.T) {
 		status int
 	}{
 		{[]string{"project", "view", "12", "--owner=example", "--format=json"}, 200},
+		{[]string{"project", "item-list", "12", "--owner=example", "--limit=50"}, 200},
+		{[]string{"project", "field-list", "12", "--owner=example"}, 200},
+		{[]string{"project", "list", "--owner=example"}, 403},
 		{[]string{"project", "view", "13", "--owner=example"}, 403},
+		{[]string{"project", "item-list", "13", "--owner=example"}, 403},
 		{[]string{"project", "view", "12", "--owner=other"}, 403},
 		{[]string{"project", "edit", "12", "--owner=example"}, 403},
 		{[]string{"project", "view", "12", "--owner=example", "--jq=env.GH_TOKEN"}, 403},
@@ -80,6 +84,24 @@ func TestProjectViewIntegration(t *testing.T) {
 		if a.status != tc.status || tc.status == 200 && (a.code != 0 || !strings.Contains(a.stdout, "--owner=example") || strings.Contains(a.stdout, "--repo")) {
 			t.Errorf("%v: %+v", tc.args, a)
 		}
+	}
+}
+
+func TestProjectListOwnerScope(t *testing.T) {
+	fakeGH(t, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+	entry := qubeJSON("ai", 8401)
+	entry = strings.TrimSuffix(entry, "}") + `,"read_projects":["example/*"]}`
+	d := newTestDaemon(t, "{"+entry+"}")
+	defer d.close()
+	for _, command := range []string{"list", "ls"} {
+		a := d.gh(t, "ai", wire.Request{Argv: []string{"project", command, "--owner=example", "--closed", "-L50"}})
+		if a.status != 200 || a.code != 0 || !strings.Contains(a.stdout, "project\nlist\n--owner=example\n--closed=true\n--limit=50\n") {
+			t.Errorf("%s: %+v", command, a)
+		}
+	}
+	a := d.gh(t, "ai", wire.Request{Argv: []string{"project", "list", "--owner=other"}})
+	if a.status != 403 {
+		t.Errorf("unallowed owner: %+v", a)
 	}
 }
 

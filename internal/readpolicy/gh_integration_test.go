@@ -202,7 +202,7 @@ func TestRealGHAcceptsAllowedFlags(t *testing.T) {
 	dir := t.TempDir()
 	values := map[string]string{"state": "open", "author": "alice", "assignee": "alice", "base": "main", "head": "topic", "label": "bug", "limit": "10", "search": "bug", "json": "number", "template": "{{.}}", "color": "never", "interval": "10", "milestone": "v1", "mention": "alice", "branch": "main", "commit": "abcdef", "event": "push", "status": "success", "user": "alice", "workflow": "ci.yml", "job": "1", "attempt": "1", "ref": "main", "repo": "o/r", "owner": "o", "sort": "created", "order": "asc", "committer": "alice", "filename": "file", "extension": "go", "language": "go"}
 	for command, flags := range commands {
-		if command == "project view" {
+		if strings.HasPrefix(command, "project ") {
 			continue // Separate project allowlist and CLI test below.
 		}
 		t.Run(command, func(t *testing.T) {
@@ -279,15 +279,21 @@ func TestRealGHAcceptsAllowedFlags(t *testing.T) {
 	}
 }
 
-func TestRealGHAcceptsProjectView(t *testing.T) {
+func TestRealGHAcceptsProjectReads(t *testing.T) {
 	gh, err := exec.LookPath("gh")
 	if err != nil {
 		t.Skip("gh is not installed")
 	}
 	dir := t.TempDir()
-	for _, options := range [][]string{nil, {"--format=json"}, {"--format=json", "--template={{.title}}"}} {
-		args := append([]string{"project", "view", "12", "--owner=example"}, options...)
-		canonical, err := ParseProjectView(args, []string{"example/12"})
+	for _, args := range [][]string{
+		{"project", "view", "12", "--owner=example"},
+		{"project", "view", "12", "--owner=example", "--format=json", "--template={{.title}}"},
+		{"project", "item-list", "12", "--owner=example", "--format=json", "--limit=50", "--query=assignee:alice", "--field=Status", "--field=Priority", "--field-id=FIELD_1"},
+		{"project", "field-list", "12", "--owner=example", "--format=json", "-L50"},
+		{"project", "list", "--owner=example", "--closed", "--format=json", "--limit=50"},
+		{"project", "ls", "--owner=example", "--closed=false"},
+	} {
+		canonical, err := ParseProjectRead(args, []string{"example/*"})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -26,7 +26,7 @@ read-only token, and most read commands work as usual: gh pr view, gh pr diff,
 gh pr checks, gh pr list, gh issue view, gh run view --log-failed,
 gh search ... --repo OWNER/REPO, and gh api repos/OWNER/REPO/... (GET only).
 For review threads with their resolved state, use gh pr threads NUMBER.
-gh project view NUMBER --owner OWNER reads projects allowed in read_projects.
+gh project view, item-list, field-list, and list read projects in read_projects.
 git clone and git fetch from GitHub work too: through gh-auth for the
 repositories it may read, and straight from GitHub for other public ones.
 Instead of gh repo clone and gh pr checkout, use
@@ -93,8 +93,8 @@ func Main(args []string) int {
 		repo = explicit
 	}
 
-	projectView := len(args) >= 2 && args[0] == "project" && args[1] == "view"
-	if repo == "" && !projectView {
+	projectRead := len(args) >= 2 && args[0] == "project"
+	if repo == "" && !projectRead {
 		var err error
 		repo, err = inferRepo()
 		if err != nil {

@@ -43,8 +43,8 @@ func Allowed(repo string, patterns []string) bool {
 	return false
 }
 
-// allowedOwner requires a grant that covers every repository for the owner;
-// a finite list of repositories is insufficient for an owner-wide search.
+// allowedOwner requires a grant that covers every name under the owner;
+// individual repository or project grants cannot authorize owner-wide reads.
 func allowedOwner(owner string, patterns []string) bool {
 	if !Allowed(owner+"/x", patterns) {
 		return false
@@ -62,10 +62,13 @@ func allowedOwner(owner string, patterns []string) bool {
 }
 
 var commands = map[string]string{
-	"project view": "owner,format,jq,template",
-	"pr view": "comments,json,jq,template", "pr list": "state,author,assignee,base,head,label,limit,search,draft,json,jq,template", "pr diff": "name-only,patch,color", "pr checks": "json,jq,template,required,watch,interval,fail-fast", "issue view": "comments,json,jq,template", "issue list": "state,author,assignee,label,limit,search,milestone,mention,json,jq,template", "repo view": "json,jq,template", "label list": "limit,search,json,jq,template", "release list": "limit,exclude-drafts,exclude-pre-releases,json,jq,template", "release view": "json,jq,template", "run list": "branch,commit,event,limit,status,user,workflow,json,jq,template", "run view": "log,log-failed,job,attempt,exit-status,json,jq,template,verbose", "workflow list": "all,limit,json,jq,template", "workflow view": "ref,yaml", "search issues": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search prs": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search commits": "repo,owner,limit,sort,order,author,committer,json,jq,template", "search code": "repo,owner,limit,filename,extension,language,json,jq,template",
+	"project view":       "owner,format,jq,template",
+	"project item-list":  "owner,format,jq,template,limit,query,field,field-id",
+	"project field-list": "owner,format,jq,template,limit",
+	"project list":       "owner,format,jq,template,limit,closed",
+	"pr view":            "comments,json,jq,template", "pr list": "state,author,assignee,base,head,label,limit,search,draft,json,jq,template", "pr diff": "name-only,patch,color", "pr checks": "json,jq,template,required,watch,interval,fail-fast", "issue view": "comments,json,jq,template", "issue list": "state,author,assignee,label,limit,search,milestone,mention,json,jq,template", "repo view": "json,jq,template", "label list": "limit,search,json,jq,template", "release list": "limit,exclude-drafts,exclude-pre-releases,json,jq,template", "release view": "json,jq,template", "run list": "branch,commit,event,limit,status,user,workflow,json,jq,template", "run view": "log,log-failed,job,attempt,exit-status,json,jq,template,verbose", "workflow list": "all,limit,json,jq,template", "workflow view": "ref,yaml", "search issues": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search prs": "repo,owner,limit,sort,order,state,author,assignee,label,json,jq,template", "search commits": "repo,owner,limit,sort,order,author,committer,json,jq,template", "search code": "repo,owner,limit,filename,extension,language,json,jq,template",
 }
-var bools = map[string]bool{"comments": true, "name-only": true, "patch": true, "draft": true, "required": true, "watch": true, "fail-fast": true, "log": true, "log-failed": true, "exit-status": true, "verbose": true, "all": true, "yaml": true, "exclude-drafts": true, "exclude-pre-releases": true}
+var bools = map[string]bool{"closed": true, "comments": true, "name-only": true, "patch": true, "draft": true, "required": true, "watch": true, "fail-fast": true, "log": true, "log-failed": true, "exit-status": true, "verbose": true, "all": true, "yaml": true, "exclude-drafts": true, "exclude-pre-releases": true}
 
 func containsForbiddenScope(value string) bool {
 	lower := strings.ToLower(value)
@@ -106,6 +109,10 @@ func shortFlag(command, name string) string {
 // NormalizeGlobal moves the inherited repository flag after the subcommand so
 // the same strict validation applies regardless of where the caller put it.
 func NormalizeGlobal(argv []string) ([]string, error) {
+	if len(argv) >= 2 && argv[0] == "project" && argv[1] == "ls" {
+		argv = append([]string{}, argv...)
+		argv[1] = "list"
+	}
 	var opts []string
 	for len(argv) > 0 && strings.HasPrefix(argv[0], "-") {
 		a := argv[0]
@@ -145,8 +152,8 @@ func Parse(argv []string, repo, branch string, allowed []string) ([]string, erro
 	if len(argv) < 1 {
 		return nil, errors.New("missing command")
 	}
-	if len(argv) >= 2 && argv[0] == "project" && argv[1] == "view" {
-		return ParseProjectView(argv, nil)
+	if len(argv) >= 2 && argv[0] == "project" {
+		return ParseProjectRead(argv, nil)
 	}
 	api := argv[0] == "api"
 	key := "api"
